@@ -14,6 +14,9 @@ command -v docker >/dev/null && pass "docker: $(docker --version)" || fail "dock
 docker compose version >/dev/null 2>&1 && pass "compose: $(docker compose version --short)" || fail "docker compose plugin missing"
 docker info >/dev/null 2>&1 && pass "docker daemon reachable" || fail "cannot talk to the docker daemon (is your user in the docker group? try: sudo ./doctor.sh)"
 [ -f .env ] && pass ".env present" || fail ".env missing: cp .env.example .env && chmod 600 .env"
+if [ -f .env ] && grep -qE '^COMPOSE_PROFILES=.*test-stream' .env; then
+  info "test-stream profile enabled (synthetic RTSP source)"
+fi
 if [ -f .env ]; then
   perms=$(stat -c '%a' .env)
   [ "$perms" = "600" ] && pass ".env permissions 600" || info ".env permissions are $perms; recommended: chmod 600 .env"
@@ -34,7 +37,7 @@ else
   info "check: docker compose logs --tail 80 frigate   (config errors are printed at startup)"
 fi
 if docker compose exec -T api python -c "import urllib.request,json; s=json.load(urllib.request.urlopen('http://frigate:5000/api/stats', timeout=5)); [print('         camera', k, 'camera_fps=', v.get('camera_fps')) for k,v in s.get('cameras',{}).items()]" 2>/dev/null; then
-  info "camera_fps 0 means Frigate receives no frames: check the RTSP URL with the probe (SETUP.md section 6)"
+  info "camera_fps 0 means Frigate receives no frames: check the test-stream container or the RTSP URL (SETUP.md section 9)"
 fi
 
 echo "Web entry point"

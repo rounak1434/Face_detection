@@ -1,6 +1,7 @@
 """Real integration tests: no mocks. They talk to the running docker stack
 (Caddy -> api -> Frigate -> test stream or NVR) and are skipped unless
-IT_BASE_URL is set. Run on the Linux host, see docs/SETUP.md section 5:
+IT_BASE_URL is set. On the Linux host, run them in a container with
+deploy/run-integration-tests.sh (docs/SETUP.md section 7), or directly:
 
     IT_BASE_URL=https://<SITE_ADDRESS> IT_VERIFY_TLS=0 IT_ADMIN_USER=admin \
     IT_ADMIN_PASSWORD='...' IT_CAMERA=entrance pytest -m integration -v

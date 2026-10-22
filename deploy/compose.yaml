@@ -1,8 +1,9 @@
 # AI Surveillance stack.
 #
-#   docker compose up -d                          # real camera/NVR (set URLs in .env)
-#   docker compose --profile test-stream up -d    # synthetic RTSP test pattern
-#   add -f compose.yaml -f compose.nvidia.yaml    # to give Frigate the NVIDIA GPU
+#   docker compose up -d --build                  # uses deploy/.env; the example enables
+#                                                 # the synthetic test stream (COMPOSE_PROFILES)
+#   docker compose down                           # stop, keeping data
+#   add -f compose.yaml -f compose.nvidia.yaml    # optional: give Frigate the NVIDIA GPU
 #
 # Only the web container publishes ports to the LAN. Frigate's unauthenticated
 # port 5000 stays on the internal network; its authenticated UI (8971) is bound

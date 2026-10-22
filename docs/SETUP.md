@@ -1,127 +1,178 @@
-# Setup on the Linux host
+# Setup on Ubuntu
 
-Target: Ubuntu 22.04 or 24.04 LTS on x86-64 (i7, 32 GB RAM, NVIDIA GTX 1650 4 GB).
+Starts the full stack on a clean Ubuntu machine with the **synthetic RTSP test stream**. No camera, NVR, GPU or WSL is needed.
 
 Run these commands yourself. Steps marked **(system change)** install packages or change system configuration.
 
-## What has to be on the host
-| Needed | Why | Not needed |
-|---|---|---|
-| Docker Engine + Compose plugin | Runs Frigate, the api, the web server and the test stream | Docker Desktop |
-| git, curl | Get the code; `doctor.sh` uses curl | |
-| python3-venv | Only for running the integration tests from the host | |
-| NVIDIA driver + NVIDIA Container Toolkit | Only for GPU detection (section 7) | Not needed for milestone 1 |
+> **Status:** these steps have **not yet been run** on a Linux host. Docker, Frigate and the test stream have never run here (see [VERIFICATION.md](VERIFICATION.md)). Please report any step that fails.
 
-**FFmpeg does not need to be installed on the host.** The test-stream image (`mediamtx:1.9.3-ffmpeg`) and the api image both include ffmpeg/ffprobe, and Frigate ships its own.
+## Supported host
+| | |
+|---|---|
+| OS | Ubuntu **22.04 LTS** or **24.04 LTS**, 64-bit x86 (amd64). Other releases may work but are untested. |
+| CPU / RAM | 4+ cores and 8 GB RAM for testing. The target AI PC has an i7 and 32 GB. |
+| Disk | About 10 GB free for images and recordings. The test stream records about 3 days at most. |
+| Network | Internet access for the first image download. |
+| Needed software | Docker Engine with the Compose plugin, git, curl |
+| **Not** needed | WSL, Docker Desktop, FFmpeg on the host, Python on the host, an NVIDIA GPU |
 
-## 1. Prerequisites (system change)
-Install Docker from Docker's own apt repository. This follows https://docs.docker.com/engine/install/ubuntu/, so check that page if a command fails.
+FFmpeg/ffprobe ship inside the test-stream, api and Frigate images. The integration tests run in a throwaway Python container, so the host's own Python version does not matter. Ubuntu 22.04's Python 3.10 is too old for the backend, which is why the tests don't use it.
+
+## Quick start (copy and paste)
+After Docker is installed (section 1):
+```bash
+git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.git ~/ai-surveillance
+cd ~/ai-surveillance/deploy
+cp .env.example .env && chmod 600 .env
+docker compose up -d --build                          # first run downloads images: several minutes
+docker compose ps                                     # frigate, api, web, test-stream → running
+docker compose exec api ai-surveillance create-admin admin
+bash doctor.sh
+```
+Then open **https://localhost/** on the same machine, accept the certificate warning, and sign in. Details follow below.
+
+## 1. Install Docker Engine and Compose (system change)
+These commands follow Docker's official guide, https://docs.docker.com/engine/install/ubuntu/. Check that page if one fails.
 ```bash
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git python3-venv
+sudo apt-get install -y ca-certificates curl git
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo usermod -aG docker "$USER"     # then log out and back in
+sudo usermod -aG docker "$USER"
 ```
-Check:
+**Log out and back in** so the `docker` group applies. Or run `newgrp docker` in the current terminal. Then check:
 ```bash
 docker version && docker compose version && docker run --rm hello-world
 ```
-If the host firewall (ufw) is on, allow the web ports with `sudo ufw allow 80,443/tcp`. Do **not** open 5000, 8554 or 8971.
+- If Ubuntu's own `docker.io` package or Docker Desktop is installed, remove it first, as the Docker guide describes.
+- If the firewall (ufw) is on and other PCs should reach the site:
+  ```bash
+  sudo ufw allow 80,443/tcp
+  ```
+  Never open 5000, 8554 or 8971.
 
 ## 2. Get the code
 ```bash
-sudo mkdir -p /opt/ai-surveillance && sudo chown "$USER" /opt/ai-surveillance
-git clone https://github.com/rounak1434/Face_detection.git /opt/ai-surveillance
-cd /opt/ai-surveillance && git switch feat/initial-platform    # until it is merged to main
-cd deploy
-cp .env.example .env && chmod 600 .env
+git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.git ~/ai-surveillance
+cd ~/ai-surveillance
+git log --oneline -3          # newest commit first
 ```
-Edit `.env`:
-- **`SITE_ADDRESS`**: the host name or LAN IP operators will type, for example `192.168.1.50`. Keep `localhost` if you only test on the host itself.
-- **`TZ`**: your timezone.
-- **Camera URLs**: leave them on the test stream for now.
-
-## 3. Start the stack with the synthetic test stream
+Until it is merged, the work lives on the `feat/initial-platform` branch. In an existing clone, update it with:
 ```bash
-cd /opt/ai-surveillance/deploy
-docker compose --profile test-stream pull        # Frigate, mediamtx (fails here if an image tag is wrong)
-docker compose --profile test-stream up -d --build
-docker compose ps                                 # frigate, api, web, test-stream: all "running"
-bash doctor.sh                                    # read-only health check
+git switch feat/initial-platform && git pull --ff-only
 ```
-The first Frigate start takes a minute or two. To watch it:
+
+## 3. Configure (`deploy/.env`)
+```bash
+cd ~/ai-surveillance/deploy
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+The example works unchanged for a test on the same machine. It contains **no credentials**.
+
+| Variable | Default | Change when |
+|---|---|---|
+| `COMPOSE_PROFILES` | `test-stream` | You switch to a real NVR (section 9): remove it. |
+| `SITE_ADDRESS` | `localhost` | Other PCs should open the site. Use this machine's LAN IP or host name, for example `192.168.1.50`. |
+| `TZ` | `Asia/Kolkata` | You are in another timezone. |
+| `FRIGATE_CAMERA_MAIN_URL` / `_SUB_URL` | the test stream | You switch to a real NVR (section 9). |
+| `DEVICE_ALLOWED_NETWORKS` | `192.168.0.0/16,10.0.0.0/8` | You narrow it to your camera subnet. |
+
+Never commit `deploy/.env`. It is gitignored.
+
+## 4. Start, stop and update the stack
+| Action | Command (run in `~/ai-surveillance/deploy`) |
+|---|---|
+| Start (and build) | `docker compose up -d --build` |
+| Status | `docker compose ps` |
+| Logs | `docker compose logs -f frigate` (or `api`, `web`, `test-stream`) |
+| Stop, keeping all data | `docker compose down` |
+| Restart one service | `docker compose restart api` |
+| Update after `git pull` | `docker compose up -d --build` |
+| Delete **all** data | `docker compose down -v && sudo rm -rf storage`. This deletes recordings, captures, accounts and the credentials key. |
+
+The first start downloads the Frigate, mediamtx, Python, Node and Caddy images, then builds the api and web images. Frigate needs another minute or two to come up. To watch it:
 ```bash
 docker compose logs -f frigate
 ```
+Stop following with Ctrl+C.
 
-## 4. Create the administrator and open the website
+With `COMPOSE_PROFILES=test-stream` in `.env`, every `docker compose` command includes the synthetic test stream. It is a moving test pattern, H.264 1280×720 at 15 fps, at `rtsp://test-stream:8554/test` inside the stack. On the host itself it is at `rtsp://127.0.0.1:8554/test`.
+
+Detection runs on the **CPU** by default. The GPU is optional (section 8).
+
+## 5. Create the administrator
 ```bash
-docker compose exec api ai-surveillance create-admin admin      # prompts for a password (min 12 chars)
+docker compose exec api ai-surveillance create-admin admin
 ```
-- Open `https://<SITE_ADDRESS>/` in a browser and sign in.
-- The certificate comes from Caddy's own local CA, so the first visit shows a warning. To trust it permanently, install the root certificate on each operator PC:
-  ```bash
-  docker compose cp web:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
-  ```
-- You should see the camera **entrance** with a moving colour test pattern and a **Live** badge.
-- Press **Snapshot**. Then, after the stack has run for at least a minute, press **Save 10 s clip**.
+- It prompts twice for a password of at least 12 characters. The password is not echoed, not stored in shell history, and stored only as an argon2id hash.
+- Running it again for the same name resets the password and signs that user out everywhere.
 
-Running `create-admin` again with the same name resets the password and signs that user out everywhere.
+## 6. Open the website
+- **On this machine:** https://localhost/
+- **From another PC:** `https://<SITE_ADDRESS>/`. This needs `SITE_ADDRESS` set to that name or IP, and ports 80/443 allowed.
 
-**Frigate's own UI**, for administrators only, is on `https://127.0.0.1:8971` on the host. Reach it from another PC with `ssh -L 8971:127.0.0.1:8971 <host>`. Its first admin password is printed once at first start:
-```bash
-docker compose logs frigate | grep -iA3 password
-```
+**The certificate.** Caddy issues the HTTPS certificate from its own local CA, so the first visit shows a browser warning. To trust it permanently:
+1. Export the CA root certificate:
+   ```bash
+   docker compose cp web:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+   ```
+2. On Ubuntu, trust it system-wide:
+   ```bash
+   sudo cp caddy-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
+   ```
+3. Firefox and Chrome use their own stores. Import `caddy-root.crt` in their certificate settings, under "Authorities".
+4. On Windows, double-click the file and install it into "Trusted Root Certification Authorities".
 
-**Camera & NVR Setup tab:** click **Add synthetic test source**, then **Test connection**. On the Ubuntu stack it should show **Connected** (h264 1280×720). See [CAMERA-SETUP.md](CAMERA-SETUP.md).
+**What you should see:**
+1. **Live tab:** the camera **entrance** shows the moving test pattern, with a **Live** badge. "Still frames" means the live relay fell back; see TROUBLESHOOTING.md.
+2. **Snapshot** saves a JPEG into Captures.
+3. **Save 10 s clip**: wait at least one minute after start so recordings exist. The clip appears as "pending", then "ready".
+4. **Camera & NVR Setup tab:** click **Add synthetic test source**, then **Test connection**. It should show **Connected (h264 1280×720)**.
 
-**Back up `credentials.key`.** It encrypts the stored device passwords:
+**Back up the credentials key.** It encrypts the passwords stored for real devices:
 ```bash
 docker compose cp api:/data/credentials.key ./credentials.key.backup && chmod 600 credentials.key.backup
 ```
 
-## 5. Integration tests (real stack, no mocks)
+**Frigate's own UI**, for administrators only, is at https://127.0.0.1:8971 on this machine only. From another PC, use `ssh -L 8971:127.0.0.1:8971 <user>@<host>`. Frigate prints its first admin password once:
 ```bash
-cd /opt/ai-surveillance/backend
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                          # unit tests (mocked engine)
-IT_BASE_URL=https://<SITE_ADDRESS> IT_VERIFY_TLS=0 IT_ADMIN_USER=admin IT_ADMIN_PASSWORD='<password>' \
-  .venv/bin/pytest -m integration -v      # real stack
+docker compose logs frigate | grep -iA3 password
 ```
-- `IT_BASE_URL` must use the same name as `SITE_ADDRESS`, because Caddy only answers for that name.
-- Wait about a minute after the stack starts, so that a recording exists for the clip test.
-- Record the output in `docs/VERIFICATION.md`.
 
-## 6. Connect the CP Plus NVR
-1. **Find the exact models.** Read the NVR and camera model numbers from the device labels or the web UI, and record them in VERIFICATION.md. Do not assume a model.
-2. **Enable RTSP** on the NVR if your firmware needs it. Create a dedicated low-privilege user for streaming.
-3. **Find the RTSP URL.** Many CP Plus devices use the Dahua-style format below. Treat it as a candidate until the probe succeeds; your model's manual is authoritative.
-   `rtsp://<user>:<password>@<nvr-ip>:554/cam/realmonitor?channel=<n>&subtype=0` (main stream; `subtype=1` is the sub stream)
-4. **Probe it** without putting the password in your shell history:
-   ```bash
-   cd /opt/ai-surveillance/deploy
-   read -rs NVR_MAIN_URL && export NVR_MAIN_URL      # paste the URL, press Enter
-   read -rs NVR_SUB_URL && export NVR_SUB_URL
-   docker compose run --rm -e NVR_MAIN_URL -e NVR_SUB_URL api \
-     ai-surveillance probe --env NVR_MAIN_URL --env NVR_SUB_URL
-   ```
-   Success lists the codec, width, height and fps. Paste the masked output into VERIFICATION.md.
-5. **Switch the stack to the NVR.**
-   1. Put the two URLs into `FRIGATE_CAMERA_MAIN_URL` and `FRIGATE_CAMERA_SUB_URL` in `.env`.
-   2. Set `detect.width` and `detect.height` in `frigate/config.yml` to the sub-stream resolution from the probe.
-   3. Restart:
-      ```bash
-      docker compose up -d
-      ```
-   4. Repeat section 5.
-   - If the sub stream is H.265, Firefox and older browsers fall back to still frames (see TROUBLESHOOTING.md). Set the sub stream to H.264 on the NVR if possible.
+## 7. Diagnostics and integration tests
+**Health check.** It is read-only and changes nothing:
+```bash
+bash doctor.sh
+```
 
-## 7. GPU detection (separate, measured step; system change)
-1. Install the NVIDIA driver and check it:
+**Integration tests.** These run against the real stack, with no mocks. They need the stack running for at least a minute and the admin you created:
+```bash
+bash run-integration-tests.sh          # prompts for the web admin password
+```
+- The script runs `backend/tests/integration` in a throwaway `python:3.12-slim` container.
+- It checks:
+  - engine reachable and version 0.18
+  - camera listed
+  - real JPEG frame
+  - snapshot
+  - live websocket video
+  - synthetic source **Connected**
+  - 10 s clip downloadable as MP4
+- Please send the full output. It is what turns the "Unverified" lines in VERIFICATION.md into "Verified".
+
+**Unit tests** (mocked engine) need no stack:
+```bash
+docker run --rm -v "$PWD/../backend:/src:ro" python:3.12-slim sh -c 'cp -r /src /tmp/app && cd /tmp/app && pip install -q ".[dev]" && python -m pytest -q'
+```
+
+## 8. Optional: NVIDIA GPU for detection (system change)
+Everything works without this, on the CPU. Do it only after the CPU setup works.
+1. Install the NVIDIA driver (`sudo ubuntu-drivers install`), reboot, and check it:
    ```bash
    nvidia-smi
    ```
@@ -129,7 +180,7 @@ IT_BASE_URL=https://<SITE_ADDRESS> IT_VERIFY_TLS=0 IT_ADMIN_USER=admin IT_ADMIN_
    ```bash
    docker run --rm --gpus all ubuntu nvidia-smi
    ```
-3. Export a YOLOv9-s 320×320 ONNX model as described at https://docs.frigate.video/configuration/object_detectors, and place it at `deploy/frigate/model_cache/yolo.onnx`.
+3. Export a YOLOv9-s 320×320 ONNX model as described at https://docs.frigate.video/configuration/object_detectors, and save it as `deploy/frigate/model_cache/yolo.onnx`.
 4. Uncomment the `detectors`/`model` block in `deploy/frigate/config.yml`.
 5. Start with the GPU override, which also switches to the `-tensorrt` image:
    ```bash
@@ -137,14 +188,40 @@ IT_BASE_URL=https://<SITE_ADDRESS> IT_VERIFY_TLS=0 IT_ADMIN_USER=admin IT_ADMIN_
    ```
 6. Record `detectors.*.inference_speed` from Frigate's `/api/stats` in VERIFICATION.md.
 
-## 8. Start on boot and after power loss (system change)
+**To fall back to the CPU:** re-comment the block, then run `docker compose up -d` without the override.
+
+## 9. Later: connect the CP Plus NVR
+1. **Find the exact models.** Read the NVR and camera model numbers from the device labels or the web UI, and record them in VERIFICATION.md. Do not assume a model.
+2. **Enable RTSP** on the NVR if your firmware needs it. Create a dedicated low-privilege user for streaming.
+3. **Find the RTSP URL.** Many CP Plus devices use the Dahua-style format below. Treat it as a candidate until the probe succeeds; your model's manual is authoritative.
+   `rtsp://<user>:<password>@<nvr-ip>:554/cam/realmonitor?channel=<n>&subtype=0` (main stream; `subtype=1` is the sub stream)
+4. **Probe it.** Either use the Camera & NVR Setup tab, or run the command below, which keeps the password out of your shell history:
+   ```bash
+   read -rs NVR_MAIN_URL && export NVR_MAIN_URL      # paste the URL, press Enter
+   read -rs NVR_SUB_URL && export NVR_SUB_URL
+   docker compose run --rm -e NVR_MAIN_URL -e NVR_SUB_URL api \
+     ai-surveillance probe --env NVR_MAIN_URL --env NVR_SUB_URL
+   ```
+5. **Switch the stack to the NVR.**
+   1. In `.env`, set `FRIGATE_CAMERA_MAIN_URL` and `FRIGATE_CAMERA_SUB_URL` to the probed URLs. URL-encode special characters in the password.
+   2. Remove `COMPOSE_PROFILES=test-stream`.
+   3. Set `detect.width` and `detect.height` in `frigate/config.yml` to the sub-stream resolution.
+   4. Restart:
+      ```bash
+      docker compose up -d --remove-orphans
+      ```
+   5. Run section 7 again.
+   - If the sub stream is H.265, Firefox falls back to still frames. Set the sub stream to H.264 on the NVR if possible.
+
+## 10. Optional: start on boot and after power loss (system change)
+The systemd unit expects the code in `/opt/ai-surveillance`. Either clone it there, or point the unit at your folder:
 ```bash
-sudo cp /opt/ai-surveillance/deploy/systemd/ai-surveillance.service /etc/systemd/system/
+sed "s#/opt/ai-surveillance#$HOME/ai-surveillance#" ~/ai-surveillance/deploy/systemd/ai-surveillance.service | sudo tee /etc/systemd/system/ai-surveillance.service
 sudo systemctl daemon-reload
 sudo systemctl enable docker
 sudo systemctl enable --now ai-surveillance.service
 ```
-Every container also has `restart: unless-stopped`. To verify, run `sudo reboot`, then check that `https://<SITE_ADDRESS>/` returns without manual steps and that `bash doctor.sh` passes.
+Every container also has `restart: unless-stopped`. To verify, run `sudo reboot`, then check that the site returns without manual steps and that `bash doctor.sh` passes.
 
-## 9. Something is wrong
-Run `bash deploy/doctor.sh` first, then see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+## 11. Something is wrong
+Run `bash doctor.sh` first, then see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

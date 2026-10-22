@@ -66,18 +66,19 @@ Consistency of names and ports across compose, Dockerfiles, Frigate config and t
 |---|---|---|
 | Fresh clone, only remote is `rounak1434/Face_detection`; no old-project naming | Verified | git checks; case-insensitive grep found nothing |
 | Backend unit tests (`tests/unit`, mocked Frigate) | Mock-only | **57 passed** |
-| Backend integration tests (`tests/integration`) | Collected and skipped (no stack) | 6 skipped without `IT_BASE_URL` |
+| Backend integration tests (`tests/integration`) | Collected and skipped (no stack) | 7 skipped without `IT_BASE_URL` |
+| Deploy config consistency (compose, Frigate config, Caddy, env, Dockerfiles) | Verified (static parse only) | `tests/unit/test_deploy_config.py`: 14 passed. Checks names, ports, variables, restream names, the 0.18 record schema, and that no credentials are in the example. **It does not prove Frigate or Docker accept the files.** |
 | Frontend unit tests | Verified | vitest: **4 passed** |
 | Frontend production build | Verified | `tsc -b && vite build` |
 | UI smoke test: sign-in, "Engine unreachable" state, phone width | Verified (no Frigate) | Browser, local dev servers |
 | Pinned image tags exist on their registries | Verified (registry) | Docker Hub: `bluenviron/mediamtx:1.9.3-ffmpeg`, `caddy:2.8.4-alpine`, `node:20.18-alpine`; GitHub release lists `0.18.2` and `0.18.2-tensorrt` |
 | Frigate endpoints, auth and ports | Source-checked | [FRIGATE-API.md](FRIGATE-API.md) |
-| Docker images build; stack starts; Frigate accepts config | Unverified (host) | SETUP.md §3 |
+| Docker images build; stack starts; Frigate accepts config | Unverified (host) | SETUP.md §4 |
 | Test stream publishes and probes | Unverified (host) | `docker compose exec api ai-surveillance probe rtsp://test-stream:8554/test` |
-| Live view, snapshot, clip through the real stack | Unverified (host) | `pytest -m integration` (SETUP.md §5) |
-| CP Plus NVR main/sub stream | Unverified (hardware) | Models not yet recorded; SETUP.md §6 |
-| GTX 1650 detection | Unverified (hardware) | SETUP.md §7 |
-| Start on boot / power recovery | Unverified (host) | SETUP.md §8 |
+| Live view, snapshot, clip through the real stack | Unverified (host) | `bash run-integration-tests.sh` (SETUP.md §7) |
+| CP Plus NVR main/sub stream | Unverified (hardware) | Models not yet recorded; SETUP.md §9 |
+| GTX 1650 detection | Unverified (hardware) | SETUP.md §8 |
+| Start on boot / power recovery | Unverified (host) | SETUP.md §10 |
 | Alarm control through the CP Plus NVR | Not started | Not assumed. An RTSP stream does not imply alarm-output control. |
 
 ## To fill in on the Ubuntu host

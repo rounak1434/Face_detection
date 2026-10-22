@@ -31,7 +31,18 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 | `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), and the Frigate API contract (`FRIGATE-API.md`). |
 
 ## Quick start
-- **Linux host, full stack:** follow [docs/SETUP.md](docs/SETUP.md).
+**Ubuntu 22.04/24.04 with Docker**, using the synthetic test stream. No camera is needed. Full guide: [docs/SETUP.md](docs/SETUP.md).
+```bash
+git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.git ~/ai-surveillance
+cd ~/ai-surveillance/deploy && cp .env.example .env && chmod 600 .env
+docker compose up -d --build
+docker compose exec api ai-surveillance create-admin admin
+bash doctor.sh                  # health check
+bash run-integration-tests.sh   # real-stack tests
+```
+Then open https://localhost/.
+
+- **Linux host, full details:** [docs/SETUP.md](docs/SETUP.md).
 - **Development without Docker** (any OS, for UI and API work against a Frigate instance you can reach):
 
 ```bash
