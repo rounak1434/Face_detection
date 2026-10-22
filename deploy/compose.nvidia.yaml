@@ -1,0 +1,11 @@
+# Gives Frigate the NVIDIA GPU. Needs the NVIDIA driver and the NVIDIA
+# Container Toolkit on the host (see docs/SETUP.md).
+services:
+  frigate:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

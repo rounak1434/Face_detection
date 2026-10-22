@@ -1,0 +1,84 @@
+# AI Surveillance stack.
+#
+#   docker compose up -d                          # real camera/NVR (set URLs in .env)
+#   docker compose --profile test-stream up -d    # synthetic RTSP test pattern
+#   add -f compose.yaml -f compose.nvidia.yaml    # to give Frigate the NVIDIA GPU
+#
+# Only the web container publishes ports to the LAN. Frigate's unauthenticated
+# port 5000 stays on the internal network; its authenticated UI (8971) is bound
+# to the host's loopback for administrator use over SSH tunnel.
+
+name: ai-surveillance
+
+services:
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:0.18.2-tensorrt
+    restart: unless-stopped
+    shm_size: "256mb"
+    environment:
+      TZ: ${TZ:-UTC}
+      FRIGATE_CAMERA_MAIN_URL: ${FRIGATE_CAMERA_MAIN_URL:?set FRIGATE_CAMERA_MAIN_URL in .env}
+      FRIGATE_CAMERA_SUB_URL: ${FRIGATE_CAMERA_SUB_URL:?set FRIGATE_CAMERA_SUB_URL in .env}
+    volumes:
+      - ./frigate:/config
+      - ./storage/frigate-media:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      - "127.0.0.1:8971:8971"
+    networks: [internal]
+
+  api:
+    build: ../backend
+    restart: unless-stopped
+    # Variables are listed one by one so camera credentials in .env are not
+    # handed to this container.
+    environment:
+      APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-AI Surveillance}
+      DATABASE_URL: sqlite:////data/app.db
+      MEDIA_ROOT: /data/media
+      FRIGATE_URL: ${FRIGATE_URL:-http://frigate:5000}
+      FRIGATE_USERNAME: ${FRIGATE_USERNAME:-}
+      FRIGATE_PASSWORD: ${FRIGATE_PASSWORD:-}
+      FRIGATE_VERIFY_TLS: ${FRIGATE_VERIFY_TLS:-true}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      CLIP_DEFAULT_SECONDS: ${CLIP_DEFAULT_SECONDS:-10}
+      CLIP_MAX_SECONDS: ${CLIP_MAX_SECONDS:-60}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./storage/api:/data
+    depends_on: [frigate]
+    networks: [internal]
+
+  web:
+    build: ../frontend
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [api]
+    networks: [internal]
+
+  # Synthetic RTSP source for testing without camera hardware.
+  test-stream:
+    profiles: [test-stream]
+    image: bluenviron/mediamtx:1.9.3-ffmpeg
+    restart: unless-stopped
+    volumes:
+      - ./test-stream/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:8554:8554"
+    networks: [internal]
+
+networks:
+  internal: {}
+
+volumes:
+  caddy-data: {}

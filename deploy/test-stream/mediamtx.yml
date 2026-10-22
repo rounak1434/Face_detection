@@ -1,0 +1,12 @@
+# Synthetic RTSP source: a moving test pattern with a clock, H.264, 1280x720 @ 15 fps.
+# Available inside the stack as rtsp://test-stream:8554/test
+# and on the host as rtsp://127.0.0.1:8554/test.
+rtspTransports: [tcp]
+paths:
+  test:
+    runOnInit: >-
+      ffmpeg -hide_banner -loglevel warning -re
+      -f lavfi -i testsrc2=size=1280x720:rate=15
+      -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes

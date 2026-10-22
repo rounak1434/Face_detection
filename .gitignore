@@ -1,0 +1,37 @@
+# Secrets and local configuration
+.env
+*.env
+!*.env.example
+deploy/secrets/
+
+# Runtime data: camera footage, captures, databases, models
+media/
+data/
+deploy/storage/
+deploy/frigate/model_cache/
+*.db
+*.sqlite3
+*.onnx
+*.engine
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

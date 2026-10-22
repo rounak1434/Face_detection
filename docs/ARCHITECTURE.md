@@ -1,0 +1,56 @@
+# Architecture
+
+## Goals
+- Reliable, local-only surveillance for cameras the operator owns and is authorized to monitor.
+- Reuse a proven video engine instead of rebuilding detection, recording and restreaming.
+- A clear boundary: the browser talks only to our API, and the API talks to the engine.
+- Every hardware claim is backed by a recorded test ([VERIFICATION.md](VERIFICATION.md)).
+
+## Components
+```
+ CP Plus camera ──RTSP──► CP Plus NVR (independent 24/7 recording)
+                               │ RTSP main + sub stream
+ ┌──────────── Linux host (i7, 32 GB RAM, GTX 1650 4 GB) · docker compose ────────────┐
+ │                                                                                    │
+ │  frigate   go2rtc restream · object detection · recordings · exports               │
+ │     ▲      internal network only (port 5000); UI on 127.0.0.1:8971                 │
+ │     │ HTTP + websocket                                                             │
+ │  api       FastAPI: sign-in, camera list, live relay, snapshot/clip capture,       │
+ │            capture index (SQLite) and media store                                  │
+ │     ▲                                                                              │
+ │  web       Caddy: HTTPS (local CA), security headers, serves the React UI,         │
+ │            proxies /api → api. The only service published on the LAN.            │
+ │                                                                                    │
+ │  test-stream (optional profile): mediamtx + ffmpeg test pattern over RTSP          │
+ └────────────────────────────────────────────────────────────────────────────────────┘
+                               ▲ HTTPS
+                        operator browser
+```
+
+## Request flows
+- **Live view:** the browser opens `wss://<host>/api/cameras/<cam>/live`. The api checks the session cookie and that the Origin matches the Host, then relays go2rtc's MSE websocket from Frigate. If MSE fails, the UI polls `/api/cameras/<cam>/latest.jpg` once per second.
+- **Snapshot:** `POST /api/cameras/<cam>/snapshot`. The api fetches Frigate's latest frame, writes it atomically under `media/captures/` and indexes it.
+- **Clip:** `POST /api/cameras/<cam>/clip` returns 202 with a pending capture. A background task then does the following:
+  1. Waits for the current recording segment to be flushed.
+  2. Asks Frigate to export `[now-N, now]` and polls the export until it finishes.
+  3. Downloads the MP4 and marks the capture `ready`, or `failed` with the reason.
+- **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
+
+## Security model
+| Concern | Measure |
+|---|---|
+| Operator access | Single admin account (more roles in a later milestone): argon2id, minimum 12-character password, per-client lockout after 5 failures, httpOnly + Secure + SameSite=Strict session cookie, server-side sessions stored as SHA-256 hashes. |
+| Engine exposure | Frigate port 5000 is unauthenticated, so it is never published. Port 8971 is bound to loopback. The browser never contacts Frigate. |
+| Camera credentials | Kept only in `deploy/.env` (gitignored, chmod 600) and passed only to the Frigate container. API responses never include stream URLs. Probe output masks `user:pass@`. |
+| Transport | HTTPS via Caddy's local CA. HSTS, CSP, no framing. |
+| Uploaded and saved files | No client-chosen paths. Strict file-name pattern. Resolved path must stay inside the media directory. |
+| Data residency | No cloud calls at runtime. Model downloads (later milestones) are one-time and documented. |
+
+## Planned milestones
+1. **Foundation (this milestone):** clean repo, live view, snapshot/clip, probe, tests, docs.
+2. **Registry and matching:** authorized-person enrollment and import with consent records, face matching that yields `AUTHORIZED` / `UNRECOGNIZED` / `INCONCLUSIVE` / `SYSTEM_ERROR`, Frigate MQTT events, Alembic migrations. Starts by evaluating Frigate's built-in face recognition against our own matcher (see ADR-0001).
+3. **Events:** event history with snapshots, clips, detection details and retention rules. Facial attribute estimates are shown as fallible estimates only.
+4. **Alerts and alarm:** confidence-gated alerts. Alarm output only through an integration verified on the real hardware.
+
+## Rename-readiness
+The display name comes from `APP_DISPLAY_NAME`. Package, service and database names are generic (`ai_surveillance`, `api`, `web`, `app.db`).
