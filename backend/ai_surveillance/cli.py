@@ -15,7 +15,7 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import AdminUser, Database
 from .rtsp import probe
-from .security import MIN_PASSWORD_LENGTH, hash_password
+from .security import MIN_PASSWORD_LENGTH, hash_password, revoke_user_sessions
 
 
 def create_admin(username: str) -> int:
@@ -37,7 +37,8 @@ def create_admin(username: str) -> int:
             action = "Created"
         else:
             user.password_hash = password_hash
-            action = "Updated password for"
+            revoke_user_sessions(session, user.id)
+            action = "Updated password (and signed out all sessions) for"
         session.commit()
     print(f"{action} admin user {username!r}.")
     return 0

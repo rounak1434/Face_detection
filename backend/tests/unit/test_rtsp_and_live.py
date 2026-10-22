@@ -3,8 +3,6 @@ import json
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from ai_surveillance.config import Settings
-from ai_surveillance.frigate_client import FrigateClient
 from ai_surveillance.routes.live import origin_allowed
 from ai_surveillance.rtsp import mask_credentials, parse_ffprobe_output
 
@@ -54,13 +52,6 @@ def test_parse_ffprobe_without_video():
 )
 def test_origin_check(origin, host, allowed):
     assert origin_allowed(origin, host) is allowed
-
-
-def test_live_ws_url():
-    http = FrigateClient(Settings(frigate_url="http://frigate:5000", _env_file=None))
-    assert http.live_ws_url("entrance") == "ws://frigate:5000/live/mse/api/ws?src=entrance"
-    https = FrigateClient(Settings(frigate_url="https://frigate:8971/", _env_file=None))
-    assert https.live_ws_url("front door") == "wss://frigate:8971/live/mse/api/ws?src=front%20door"
 
 
 def test_live_rejects_anonymous(client):

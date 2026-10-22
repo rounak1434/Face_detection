@@ -12,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
-from ..frigate_client import FrigateError
+from ..frigate_client import FrigateError, live_stream_name
 from ..security import SESSION_COOKIE, user_for_token
 
 router = APIRouter(tags=["live"])
@@ -38,9 +38,11 @@ async def live(websocket: WebSocket, camera: str) -> None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     try:
-        if camera not in await state.cameras():
+        cameras = await state.cameras()
+        if camera not in cameras:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        stream = live_stream_name(camera, cameras[camera])
         headers = await state.frigate.auth_headers()
     except FrigateError:
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
@@ -48,7 +50,7 @@ async def live(websocket: WebSocket, camera: str) -> None:
 
     await websocket.accept()
     try:
-        async with connect(state.frigate.live_ws_url(camera), additional_headers=headers, max_size=None) as upstream:
+        async with connect(state.frigate.live_ws_url(stream), additional_headers=headers, max_size=None) as upstream:
 
             async def browser_to_upstream() -> None:
                 while True:

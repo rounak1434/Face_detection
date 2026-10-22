@@ -46,6 +46,25 @@ def test_short_passwords_refused():
         hash_password("short")
 
 
+def test_password_reset_signs_out_everywhere(signed_in, settings, monkeypatch):
+    from ai_surveillance import cli, config
+
+    monkeypatch.setattr(config, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": "a-brand-new-password")
+    assert cli.create_admin(ADMIN_USER) == 0
+    assert signed_in.get("/api/auth/me").status_code == 401
+    resp = signed_in.post("/api/auth/login", json={"username": ADMIN_USER, "password": "a-brand-new-password"})
+    assert resp.status_code == 200
+
+
+def test_throttle_forgets_old_addresses():
+    throttle = LoginThrottle(max_failures=2, lockout_seconds=0)
+    throttle.record_failure("a")
+    assert not throttle.is_locked("a")
+    assert throttle._failures == {}
+
+
 def test_throttle_reset():
     throttle = LoginThrottle(max_failures=2, lockout_seconds=60)
     throttle.record_failure("a")

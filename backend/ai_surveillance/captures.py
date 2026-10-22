@@ -2,7 +2,7 @@
 
 Snapshots are taken synchronously from Frigate's latest frame. Clips are
 exported from Frigate's recordings in a background task, because Frigate
-needs time to flush the last recording segment and to render the export.
+needs time to flush the last recording segment and queues exports.
 """
 
 import asyncio
@@ -24,7 +24,14 @@ async def take_snapshot(db, frigate: FrigateClient, store: MediaStore, camera: s
     db.add(capture)
     db.flush()  # assigns the id
     try:
-        jpeg = await frigate.latest_jpeg(camera)
+        # Frigate returns a placeholder image (HTTP 200) for an offline
+        # camera, so check that frames are actually arriving first.
+        fps = await frigate.camera_fps(camera)
+        if fps is not None and fps <= 0:
+            raise FrigateError("Camera is offline: Frigate is receiving no frames")
+        jpeg, offline = await frigate.latest_jpeg(camera)
+        if offline:
+            raise FrigateError("Camera is offline: Frigate returned a fallback frame")
         capture.file_name = f"{capture.id}.jpg"
         capture.size_bytes = store.write_atomic(capture.file_name, jpeg)
         capture.status = "ready"
@@ -40,6 +47,26 @@ def create_clip_request(db, camera: str, seconds: int) -> Capture:
     db.add(capture)
     db.commit()
     return capture
+
+
+async def wait_for_export(frigate: FrigateClient, export_id: str, settings: Settings) -> str:
+    """Poll a queued Frigate export until it finishes; return its video_path."""
+    deadline = time.monotonic() + settings.clip_export_timeout_seconds
+    while True:
+        job = await frigate.export_job(export_id)
+        if job is not None and job.get("status") == "failed":
+            raise FrigateError(f"Frigate export failed: {job.get('error_message') or 'no reason given'}")
+        if job is not None and job.get("status") == "cancelled":
+            raise FrigateError("Frigate export was cancelled")
+        if job is None or job.get("status") == "success":
+            # Finished jobs are forgotten after a few seconds; the stored
+            # export row is the lasting record.
+            record = await frigate.export_record(export_id)
+            if record and not record.get("in_progress") and record.get("video_path"):
+                return record["video_path"]
+        if time.monotonic() > deadline:
+            raise FrigateError("Timed out waiting for Frigate to finish the export")
+        await asyncio.sleep(settings.clip_poll_interval_seconds)
 
 
 async def run_clip_export(
@@ -58,7 +85,6 @@ async def run_clip_export(
         camera, seconds = capture.camera, capture.duration_seconds or settings.clip_default_seconds
 
     error: str | None = None
-    export_id: str | None = None
     file_name = f"{capture_id}.mp4"
     try:
         await asyncio.sleep(settings.clip_settle_seconds)
@@ -68,16 +94,8 @@ async def run_clip_export(
             row.frigate_export_id = export_id
             db.commit()
 
-        deadline = time.monotonic() + settings.clip_export_timeout_seconds
-        while True:
-            status = await frigate.export_status(export_id)
-            if not status.get("in_progress", True) and status.get("video_path"):
-                break
-            if time.monotonic() > deadline:
-                raise FrigateError("Timed out waiting for Frigate to finish the export")
-            await asyncio.sleep(settings.clip_poll_interval_seconds)
-
-        async with frigate.stream_export_file(status["video_path"]) as resp:
+        video_path = await wait_for_export(frigate, export_id, settings)
+        async with frigate.stream_export_file(video_path) as resp:
             with store.partial_path(file_name).open("wb") as fh:
                 async for chunk in resp.aiter_bytes():
                     fh.write(chunk)

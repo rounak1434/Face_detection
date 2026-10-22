@@ -1,0 +1,102 @@
+"""Real integration tests: no mocks. They talk to the running docker stack
+(Caddy -> api -> Frigate -> test stream or NVR) and are skipped unless
+IT_BASE_URL is set. Run on the Linux host, see docs/SETUP.md section 5:
+
+    IT_BASE_URL=https://<SITE_ADDRESS> IT_VERIFY_TLS=0 IT_ADMIN_USER=admin \
+    IT_ADMIN_PASSWORD='...' IT_CAMERA=entrance pytest -m integration -v
+"""
+
+import json
+import os
+import ssl
+import time
+from urllib.parse import urlsplit
+
+import httpx
+import pytest
+from websockets.sync.client import connect
+
+pytestmark = pytest.mark.integration
+
+BASE = os.environ.get("IT_BASE_URL", "")
+VERIFY = os.environ.get("IT_VERIFY_TLS", "1") != "0"
+
+
+@pytest.fixture(scope="module")
+def api():
+    if not BASE:
+        pytest.skip("IT_BASE_URL not set")
+    client = httpx.Client(base_url=BASE, verify=VERIFY, timeout=30)
+    resp = client.post(
+        "/api/auth/login",
+        json={"username": os.environ["IT_ADMIN_USER"], "password": os.environ["IT_ADMIN_PASSWORD"]},
+    )
+    assert resp.status_code == 200, f"login failed: HTTP {resp.status_code} {resp.text[:200]}"
+    yield client
+    client.close()
+
+
+@pytest.fixture(scope="module")
+def camera():
+    return os.environ.get("IT_CAMERA", "entrance")
+
+
+def test_engine_reachable_and_version(api):
+    frigate = api.get("/api/health").json()["frigate"]
+    assert frigate["reachable"], frigate
+    assert frigate["version"].startswith("0.18"), frigate
+
+
+def test_camera_listed(api, camera):
+    names = [c["name"] for c in api.get("/api/cameras").json()]
+    assert camera in names, names
+
+
+def test_live_frame_is_real_jpeg(api, camera):
+    resp = api.get(f"/api/cameras/{camera}/latest.jpg")
+    assert resp.status_code == 200
+    assert resp.content[:3] == b"\xff\xd8\xff"
+    assert resp.headers.get("x-camera-offline") != "true", "engine served an offline fallback frame"
+
+
+def test_snapshot_capture(api, camera):
+    resp = api.post(f"/api/cameras/{camera}/snapshot")
+    assert resp.status_code == 201, resp.text
+    capture = resp.json()
+    assert api.get(capture["file_url"]).content[:3] == b"\xff\xd8\xff"
+
+
+def test_live_websocket_delivers_video(api, camera):
+    """Exercises the real go2rtc MSE handshake through the api relay."""
+    parts = urlsplit(BASE)
+    scheme = "wss" if parts.scheme == "https" else "ws"
+    ctx = None
+    if scheme == "wss":
+        ctx = ssl.create_default_context()
+        if not VERIFY:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+    cookie = "; ".join(f"{k}={v}" for k, v in api.cookies.items())
+    url = f"{scheme}://{parts.netloc}/api/cameras/{camera}/live"
+    with connect(url, ssl=ctx, additional_headers={"Cookie": cookie}, origin=f"{parts.scheme}://{parts.netloc}",
+                 open_timeout=15, max_size=None) as ws:
+        ws.send(json.dumps({"type": "mse", "value": "avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2"}))
+        first = json.loads(ws.recv(timeout=15))
+        assert first.get("type") == "mse", first
+        assert first["value"].startswith("video/mp4"), first
+        data = ws.recv(timeout=15)
+        assert isinstance(data, bytes) and len(data) > 0
+
+
+def test_clip_capture(api, camera):
+    resp = api.post(f"/api/cameras/{camera}/clip", json={"seconds": 10})
+    assert resp.status_code == 202, resp.text
+    capture = resp.json()
+    deadline = time.monotonic() + 240
+    while capture["status"] == "pending" and time.monotonic() < deadline:
+        time.sleep(3)
+        capture = api.get(f"/api/captures/{capture['id']}").json()
+    assert capture["status"] == "ready", capture
+    head = api.get(capture["file_url"], headers={"Range": "bytes=0-11"})
+    assert head.status_code == 206
+    assert head.content[4:8] == b"ftyp", "not an MP4 file"

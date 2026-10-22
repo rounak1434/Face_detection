@@ -32,7 +32,10 @@ async def list_cameras(state: AppState = Depends(get_state)) -> list[dict]:
 async def latest_frame(camera: str = Depends(known_camera), state: AppState = Depends(get_state)) -> Response:
     """Current frame for the fallback live view. Not stored."""
     try:
-        jpeg = await state.frigate.latest_jpeg(camera, height=480)
+        jpeg, offline = await state.frigate.latest_jpeg(camera, height=480)
     except FrigateError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    headers = {"Cache-Control": "no-store"}
+    if offline:
+        headers["X-Camera-Offline"] = "true"
+    return Response(jpeg, media_type="image/jpeg", headers=headers)

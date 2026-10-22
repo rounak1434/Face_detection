@@ -12,7 +12,9 @@ name: ai-surveillance
 
 services:
   frigate:
-    image: ghcr.io/blakeblackshear/frigate:0.18.2-tensorrt
+    # Standard image (CPU detector). compose.nvidia.yaml switches to the
+    # -tensorrt image and passes the GPU through.
+    image: ghcr.io/blakeblackshear/frigate:0.18.2
     restart: unless-stopped
     shm_size: "256mb"
     environment:
@@ -47,8 +49,15 @@ services:
       CLIP_DEFAULT_SECONDS: ${CLIP_DEFAULT_SECONDS:-10}
       CLIP_MAX_SECONDS: ${CLIP_MAX_SECONDS:-60}
       TZ: ${TZ:-UTC}
+    # A named volume, so the non-root api user owns it (a bind mount would
+    # be created root-owned and the service could not write its database).
     volumes:
-      - ./storage/api:/data
+      - api-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on: [frigate]
     networks: [internal]
 
@@ -81,4 +90,5 @@ networks:
   internal: {}
 
 volumes:
+  api-data: {}
   caddy-data: {}

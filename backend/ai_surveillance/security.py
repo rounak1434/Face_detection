@@ -4,14 +4,14 @@ import hashlib
 import secrets
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .db import AdminUser, LoginSession, utcnow
+from .db import AdminUser, LoginSession, as_utc, utcnow
 
 _hasher = PasswordHasher()  # argon2id with the library's current recommended parameters
 
@@ -62,18 +62,13 @@ def create_session(db: Session, user: AdminUser, ttl_hours: int) -> str:
     return token
 
 
-def _as_utc(value: datetime) -> datetime:
-    # SQLite drops tzinfo on read; values are always written in UTC.
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
-
-
 def user_for_token(db: Session, token: str | None) -> AdminUser | None:
     if not token:
         return None
     row = db.get(LoginSession, _token_hash(token))
     if row is None:
         return None
-    if _as_utc(row.expires_at) <= utcnow():
+    if as_utc(row.expires_at) <= utcnow():
         db.delete(row)
         db.commit()
         return None
@@ -84,6 +79,17 @@ def revoke_session(db: Session, token: str | None) -> None:
     if token:
         db.execute(delete(LoginSession).where(LoginSession.token_hash == _token_hash(token)))
         db.commit()
+
+
+def revoke_user_sessions(db: Session, user_id: str) -> None:
+    """Sign a user out everywhere (used after a password reset)."""
+    db.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
+
+
+def purge_expired_sessions(db: Session) -> int:
+    result = db.execute(delete(LoginSession).where(LoginSession.expires_at <= utcnow()))
+    db.commit()
+    return result.rowcount or 0
 
 
 class LoginThrottle:
@@ -98,7 +104,10 @@ class LoginThrottle:
     def _recent(self, key: str, now: float) -> list[float]:
         window_start = now - self.lockout_seconds
         recent = [t for t in self._failures.get(key, []) if t > window_start]
-        self._failures[key] = recent
+        if recent:
+            self._failures[key] = recent
+        else:
+            self._failures.pop(key, None)  # don't keep entries for every address ever seen
         return recent
 
     def is_locked(self, key: str) -> bool:
@@ -108,7 +117,7 @@ class LoginThrottle:
     def record_failure(self, key: str) -> None:
         with self._lock:
             now = time.monotonic()
-            self._recent(key, now).append(now)
+            self._failures[key] = self._recent(key, now) + [now]
 
     def reset(self, key: str) -> None:
         with self._lock:

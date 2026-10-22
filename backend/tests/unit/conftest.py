@@ -1,4 +1,9 @@
-"""Test fixtures. Frigate is replaced by a respx mock; nothing leaves the machine."""
+"""Unit-test fixtures. Frigate is replaced by a respx mock; nothing leaves the machine.
+
+The mock responses mirror the shapes in the Frigate v0.18.2 source (see
+docs/FRIGATE-API.md). Passing these tests does NOT show that a real Frigate
+behaves this way; that is what tests/integration is for.
+"""
 
 import pytest
 import respx
@@ -16,10 +21,18 @@ JPEG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
 
 FRIGATE_CONFIG = {
     "cameras": {
-        "entrance": {"enabled": True, "detect": {"width": 1280, "height": 720}, "record": {"enabled": True},
-                     "ffmpeg": {"inputs": [{"path": "rtsp://user:secret@10.0.0.5:554/stream"}]}},
+        "entrance": {
+            "enabled": True,
+            "detect": {"width": 1280, "height": 720},
+            "record": {"enabled": True},
+            "live": {"streams": {"Sub": "entrance_sub", "Main": "entrance"}},
+            # Frigate masks credentials here; the app must not forward paths anyway.
+            "ffmpeg": {"inputs": [{"path": "rtsp://*:*@10.0.0.5:554/stream"}]},
+        },
     }
 }
+
+FRIGATE_STATS = {"cameras": {"entrance": {"camera_fps": 15.0, "process_fps": 5.0, "detection_fps": 0.0}}}
 
 
 @pytest.fixture
@@ -41,7 +54,10 @@ def frigate():
     with respx.mock(base_url=FRIGATE, assert_all_called=False) as mock:
         mock.get("/api/version").respond(200, text="0.18.2-test")
         mock.get("/api/config").respond(200, json=FRIGATE_CONFIG)
-        mock.get("/api/entrance/latest.jpg").respond(200, content=JPEG, headers={"content-type": "image/jpeg"})
+        mock.get("/api/stats").respond(200, json=FRIGATE_STATS)
+        mock.get("/api/entrance/latest.jpg", name="latest").respond(
+            200, content=JPEG, headers={"content-type": "image/jpeg"}
+        )
         yield mock
 
 

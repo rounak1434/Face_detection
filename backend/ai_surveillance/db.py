@@ -14,6 +14,11 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def as_utc(value: datetime) -> datetime:
+    """SQLite drops tzinfo on read; all values are written in UTC."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 

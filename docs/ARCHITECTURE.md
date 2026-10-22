@@ -12,7 +12,7 @@
                                │ RTSP main + sub stream
  ┌──────────── Linux host (i7, 32 GB RAM, GTX 1650 4 GB) · docker compose ────────────┐
  │                                                                                    │
- │  frigate   go2rtc restream · object detection · recordings · exports               │
+ │  frigate   0.18.2: go2rtc restream · detection · recordings · exports             │
  │     ▲      internal network only (port 5000); UI on 127.0.0.1:8971                 │
  │     │ HTTP + websocket                                                             │
  │  api       FastAPI: sign-in, camera list, live relay, snapshot/clip capture,       │
@@ -29,11 +29,14 @@
 
 ## Request flows
 - **Live view:** the browser opens `wss://<host>/api/cameras/<cam>/live`. The api checks the session cookie and that the Origin matches the Host, then relays go2rtc's MSE websocket from Frigate. If MSE fails, the UI polls `/api/cameras/<cam>/latest.jpg` once per second.
-- **Snapshot:** `POST /api/cameras/<cam>/snapshot`. The api fetches Frigate's latest frame, writes it atomically under `media/captures/` and indexes it.
+- **Snapshot:** `POST /api/cameras/<cam>/snapshot`. The api first checks with `/api/stats` that Frigate is receiving frames, because Frigate serves a placeholder image for an offline camera. It then fetches the latest frame, rejects offline fallback frames, writes the image atomically under `media/captures/` and indexes it.
 - **Clip:** `POST /api/cameras/<cam>/clip` returns 202 with a pending capture. A background task then does the following:
   1. Waits for the current recording segment to be flushed.
-  2. Asks Frigate to export `[now-N, now]` and polls the export until it finishes.
-  3. Downloads the MP4 and marks the capture `ready`, or `failed` with the reason.
+  2. Queues a Frigate export of `[now-N, now]`.
+  3. Polls the export job (`/api/jobs/export/<id>`). Once Frigate forgets the finished job, it reads the export row instead.
+  4. Downloads the MP4 and marks the capture `ready`, or `failed` with Frigate's reason.
+
+  The exact Frigate interfaces are listed in [FRIGATE-API.md](FRIGATE-API.md).
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
 ## Security model

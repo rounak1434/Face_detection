@@ -17,15 +17,10 @@ Facts checked on 2026-10-22 against docs.frigate.video and the GitHub repository
   - Storage and network: face data stays under `/media/frigate/clips/faces`, and models are downloaded once.
 
 ## Decision
-Use Frigate (image `0.18.2-tensorrt`) for ingestion, restreaming, detection, recording and export. Our API integrates only through Frigate's HTTP API now, and MQTT later. It never reads Frigate's database or files directly.
+Use Frigate 0.18.2 for ingestion, restreaming, detection, recording and export. The standard image is used by default, and the `-tensorrt` image only with the GPU override. Our API integrates only through Frigate's HTTP API now, and MQTT later. It never reads Frigate's database or files directly.
 
 ## Consequences
-- Milestone 1 depends on these Frigate endpoints:
-  - `/api/version`, `/api/config`, `/api/<cam>/latest.jpg`
-  - `POST /api/export/<cam>/start/<s>/end/<e>`, `/api/exports/<id>`, `/exports/<file>`
-  - `/live/mse/api/ws?src=<cam>`
-
-  They come from documentation and prior knowledge. **Each must be confirmed against the running instance's `/api/docs`** and recorded in VERIFICATION.md.
+- Milestone 1 depends on the Frigate endpoints listed in [FRIGATE-API.md](../FRIGATE-API.md). They were checked against the v0.18.2 source code, and are to be confirmed on a running instance by the integration tests.
 - Face recognition options for milestone 2:
   - **A:** Frigate's built-in face recognition, mapping `sub_label` to registry IDs.
   - **B:** our own matcher on OpenCV YuNet + SFace, fed by Frigate person events.

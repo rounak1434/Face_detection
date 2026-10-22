@@ -8,7 +8,9 @@ deploy/secrets/
 media/
 data/
 deploy/storage/
-deploy/frigate/model_cache/
+# Frigate writes its database, backups and model cache next to its config.
+deploy/frigate/*
+!deploy/frigate/config.yml
 *.db
 *.sqlite3
 *.onnx

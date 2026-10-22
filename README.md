@@ -22,7 +22,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 | `backend/` | API service (Python 3.12, FastAPI). Package `ai_surveillance`. |
 | `frontend/` | Web UI (React + TypeScript + Vite). |
 | `deploy/` | Docker Compose stack: Frigate, api, web (Caddy HTTPS) and an optional test stream. Also holds the systemd unit. |
-| `docs/` | Architecture, setup, troubleshooting, verification record and decision records (ADRs). |
+| `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), and the Frigate API contract (`FRIGATE-API.md`). |
 
 ## Quick start
 - **Linux host, full stack:** follow [docs/SETUP.md](docs/SETUP.md).
@@ -30,7 +30,8 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 
 ```bash
 cd backend && python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                     # unit tests, no network needed
+.venv/bin/pytest                     # unit tests (tests/unit, mocked engine, no network)
+.venv/bin/pytest -m integration      # real-stack tests (tests/integration); skipped unless IT_BASE_URL is set
 FRIGATE_URL=http://<frigate-host>:5000 COOKIE_SECURE=false .venv/bin/ai-surveillance create-admin admin
 FRIGATE_URL=http://<frigate-host>:5000 COOKIE_SECURE=false .venv/bin/uvicorn --factory ai_surveillance.main:app --port 8000
 cd ../frontend && npm install && npm run dev     # http://localhost:5173

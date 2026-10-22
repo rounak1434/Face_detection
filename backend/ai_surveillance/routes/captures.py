@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..captures import create_clip_request, run_clip_export, take_snapshot
-from ..db import Capture
+from ..db import Capture, as_utc
 from ..deps import AppState, current_user, get_db, get_state, known_camera
 
 router = APIRouter(prefix="/api", tags=["captures"], dependencies=[Depends(current_user)])
@@ -23,7 +23,8 @@ def _to_dict(c: Capture) -> dict:
         "camera": c.camera,
         "kind": c.kind,
         "status": c.status,
-        "created_at": c.created_at.isoformat(),
+        # SQLite returns naive datetimes; they are stored in UTC, so say so.
+        "created_at": as_utc(c.created_at).isoformat(),
         "size_bytes": c.size_bytes,
         "duration_seconds": c.duration_seconds,
         "error": c.error,

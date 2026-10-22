@@ -13,7 +13,7 @@ from .deps import AppState
 from .frigate_client import FrigateClient
 from .media import MediaStore
 from .routes import auth, cameras, captures, health, live
-from .security import LoginThrottle
+from .security import LoginThrottle, purge_expired_sessions
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,8 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         stale = fail_stale_pending(db.sessionmaker)
         if stale:
             log.info("Marked %d interrupted capture(s) as failed", stale)
+        with db.sessionmaker() as session:
+            purge_expired_sessions(session)
         app.state.app = AppState(
             settings=settings,
             db=db,

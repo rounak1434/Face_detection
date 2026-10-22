@@ -1,44 +1,76 @@
 # Verification record
 
 Status labels:
-- **Verified**: tested for real; the line names where and when.
+- **Verified**: tested for real; the line says where and when.
+- **Source-checked**: matches the Frigate v0.18.2 source code, but not yet observed on a running instance.
 - **Mock-only**: tested only against a simulated Frigate.
-- **Unverified (hardware)**: still needs the Linux host, the GPU or the CP Plus devices.
+- **Unverified (host)**: needs the Ubuntu host. **Unverified (hardware)**: needs the GPU or the CP Plus devices.
 
 Results are never upgraded without a recorded test.
 
-## Milestone 1, 2026-10-22, development PC (Windows 11, Python 3.12.10, Node 24)
+## Known limitation of the development PC
+This Windows PC has no Docker and no FFmpeg, and WSL is broken. **Frigate, the test stream, the Docker images and the compose stack have never run here.** Everything below that needs them is unverified until the steps in [SETUP.md](SETUP.md) §1–5 are run on Ubuntu.
+
+## Validation review, 2026-10-22 (before milestone 2)
+Defects found by checking our code and config against the Frigate v0.18.2 source. The mocked tests had passed with every one of these:
+
+| # | Defect | Effect if not fixed | Fix | Test |
+|---|---|---|---|---|
+| 1 | Frigate config used `record.retain`, which does not exist in 0.18 (now `record.continuous.days`) | Frigate would likely refuse to start | Config uses `continuous.days: 3` | Unverified (host): Frigate startup |
+| 2 | The export was treated as finished on the POST response. Frigate 0.18 answers **202 queued**, and the export row only exists once the worker runs. | Clips fail with 404 while queued | Poll `/api/jobs/export/<id>`, then fall back to `/api/exports/<id>` once the job is forgotten | `test_clip_export_flow`, `..._after_frigate_forgets_finished_job`, `..._job_failure_reason_is_kept`, `..._times_out` |
+| 3 | The export body sent `playback`, which is not a field. The real field is `source: "recordings"`. | Ignored or rejected | Body is `{"source":"recordings","name":...}` | `test_clip_export_flow` asserts the body |
+| 4 | `latest.jpg` was called with `h=`. Frigate's parameter is `height`. | Full-size frames sent for the live fallback | Uses `height` | `test_latest_frame_uses_frigate_height_param` |
+| 5 | For an offline camera Frigate returns **200** with a placeholder image | A snapshot would save an error image as evidence | Check `camera_fps` from `/api/stats` and `X-Frigate-Offline` | `test_snapshot_refused_when_camera_receives_no_frames`, `..._for_offline_fallback_frame` |
+| 6 | Frigate error messages (e.g. "No recordings found for time range") were dropped | Operators saw only "HTTP 400" | The message is carried into the capture error | `test_clip_rejected_when_no_recordings`, `test_frigate_error_message_is_surfaced` |
+| 7 | The live view assumed the go2rtc stream had the camera's name | Main 4MP / H.265 stream, or the wrong stream | Use the first `live.streams` entry, as Frigate's own UI does; config lists the sub stream first | `test_live_stream_choice` |
+| 8 | `created_at` was sent without a timezone (SQLite drops it) | Times in the UI off by the UTC offset (5 h 30 min in IST) | Sent as UTC with offset | `test_snapshot_is_stored_and_served` |
+| 9 | The api data dir was a bind mount, created root-owned | The non-root api could not write its database | Named volume `api-data` | Unverified (host) |
+| 10 | The `-tensorrt` image was the default | Unnecessary on a host without a GPU set up | Standard image by default; `-tensorrt` in `compose.nvidia.yaml` | Unverified (host) |
+| 11 | The record preset was forced to `audio-copy` | CP Plus G.711 audio cannot go into MP4 | Frigate's default record preset | Unverified (host) |
+| 12 | A password reset left old sessions valid | A stolen session survives a reset | Reset revokes all of that user's sessions | `test_password_reset_signs_out_everywhere` |
+| 13 | Expired sessions and old lockout entries were never removed | Slow growth in the database and memory | Purged at startup; entries dropped when empty | `test_throttle_forgets_old_addresses` |
+| 14 | CSP `connect-src 'self'` may block `wss:` on older Safari | Live view blocked by CSP | `connect-src 'self' wss://{host}` | Unverified (host) |
+| 15 | An unknown key `rtspTransports` in the test-stream config could be rejected by mediamtx 1.9.3 | Test stream fails to start | Removed; uses the defaults | Unverified (host) |
+| 16 | The integration guide used `https://localhost` even when `SITE_ADDRESS` is a LAN name | Caddy does not answer, so the tests fail | Docs require `IT_BASE_URL=https://<SITE_ADDRESS>` | — |
+
+Consistency of names and ports across compose, Dockerfiles, Frigate config and the api (checked by reading them side by side):
+- **Service names:** `frigate`, `api`, `web` and `test-stream` are used the same way in compose, `.env.example`, the Caddyfile and `FRIGATE_URL`.
+- **Ports:** 5000 internal only, 8971 on loopback, 8554 on loopback.
+- **Streams:** go2rtc streams `entrance` and `entrance_sub` match the camera name, as restream requires.
+- **Stored data:** the api writes to `/data`, which is the volume.
+
+## Development PC results, 2026-10-22 (Windows 11, Python 3.12.10, Node 24)
 | Item | Status | Evidence |
 |---|---|---|
-| New repo is empty, workspace is a fresh clone, only remote is `rounak1434/Face_detection` | Verified | `git ls-remote` returned no refs. Clone shows only `origin` and no commits. Repo-local identity is set. |
-| No old-project naming in any file | Verified | Case-insensitive `git grep` over all files returned no matches. |
-| Backend unit tests (auth, lockout, cookie flags, camera list hides stream URLs, unknown-camera rejection, snapshot store/serve, clip export flow and failure paths, clip length limits, media path safety, RTSP credential masking, ffprobe parsing, websocket Origin and auth checks) | Verified (Mock-only Frigate) | `pytest`: **37 passed** |
-| Frontend unit tests (login gate, camera tile snapshot, captures failure display, codec negotiation) | Verified | `vitest`: **4 passed** |
-| Frontend production build | Verified | `tsc -b && vite build` succeeded (151 kB JS) |
-| UI smoke test: sign-in, dashboard, "Engine unreachable" state, phone-width layout | Verified (no Frigate) | API + Vite dev server run locally with Frigate deliberately unreachable; checked in the browser |
-| Docker images build; compose stack starts | Unverified (needs Linux host) | No Docker on the development PC |
-| Pinned image tags exist (`frigate:0.18.2-tensorrt`, `mediamtx:1.9.3-ffmpeg`, `caddy:2.8.4-alpine`, `node:20.18-alpine`) | Unverified | Confirm on first `docker compose pull` |
-| Frigate endpoint paths used by the API (`/api/version`, `/api/config`, `/api/<cam>/latest.jpg`, `POST /api/export/...`, `/api/exports/<id>`, `/exports/<file>`, `/live/mse/api/ws`) and the `frigate_token` login cookie name | Unverified | Compare with `/api/docs` on the running 0.18.2 instance |
-| Frigate config file accepted by 0.18.2 | Unverified | Check Frigate logs on first start |
-| Live MSE view end-to-end, including go2rtc message format | Unverified | Needs the running stack |
-| Snapshot and 10 s clip against real Frigate recordings | Unverified | Run `pytest -m integration` (SETUP.md §4) |
-| Synthetic RTSP test stream | Unverified | `ai-surveillance probe rtsp://test-stream:8554/test` |
-| CP Plus NVR RTSP main/sub stream | Unverified (hardware) | Exact NVR/camera models not yet recorded; probe per SETUP.md §5 |
-| GTX 1650 detection (ONNX, YOLOv9-s 320) | Unverified (hardware) | No benchmark in Frigate docs; measure per SETUP.md §6 |
-| Start on boot / power recovery | Unverified (hardware) | Reboot test per SETUP.md §7 |
-| Alarm control through the CP Plus NVR | Not started | Not assumed. An RTSP stream does not imply alarm-output control. To be checked against the exact model's documentation and on the device. |
+| Fresh clone, only remote is `rounak1434/Face_detection`; no old-project naming | Verified | git checks; case-insensitive grep found nothing |
+| Backend unit tests (`tests/unit`, mocked Frigate) | Mock-only | **57 passed** |
+| Backend integration tests (`tests/integration`) | Collected and skipped (no stack) | 6 skipped without `IT_BASE_URL` |
+| Frontend unit tests | Verified | vitest: **4 passed** |
+| Frontend production build | Verified | `tsc -b && vite build` |
+| UI smoke test: sign-in, "Engine unreachable" state, phone width | Verified (no Frigate) | Browser, local dev servers |
+| Pinned image tags exist on their registries | Verified (registry) | Docker Hub: `bluenviron/mediamtx:1.9.3-ffmpeg`, `caddy:2.8.4-alpine`, `node:20.18-alpine`; GitHub release lists `0.18.2` and `0.18.2-tensorrt` |
+| Frigate endpoints, auth and ports | Source-checked | [FRIGATE-API.md](FRIGATE-API.md) |
+| Docker images build; stack starts; Frigate accepts config | Unverified (host) | SETUP.md §3 |
+| Test stream publishes and probes | Unverified (host) | `docker compose exec api ai-surveillance probe rtsp://test-stream:8554/test` |
+| Live view, snapshot, clip through the real stack | Unverified (host) | `pytest -m integration` (SETUP.md §5) |
+| CP Plus NVR main/sub stream | Unverified (hardware) | Models not yet recorded; SETUP.md §6 |
+| GTX 1650 detection | Unverified (hardware) | SETUP.md §7 |
+| Start on boot / power recovery | Unverified (host) | SETUP.md §8 |
+| Alarm control through the CP Plus NVR | Not started | Not assumed. An RTSP stream does not imply alarm-output control. |
 
-## To fill in on the Linux host
+## To fill in on the Ubuntu host
 ```
-Host OS / kernel:
-NVIDIA driver / CUDA (nvidia-smi):
+Date:
+Host OS / kernel (uname -a, lsb_release -a):
 docker / compose versions:
+bash doctor.sh output:
 Frigate /api/version:
-NVR model:            firmware:
-Camera model:         firmware:
+Probe of rtsp://test-stream:8554/test:
+pytest -m integration -v (full output):
+NVR model / firmware:
+Camera model / firmware:
 Probe (main stream, masked):
 Probe (sub stream, masked):
-Integration tests (pytest -m integration):
-Detector inference time (GPU):
+nvidia-smi / detector inference_speed:
 Reboot test:
 ```
