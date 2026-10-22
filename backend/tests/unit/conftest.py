@@ -45,6 +45,8 @@ def settings(tmp_path) -> Settings:
         clip_settle_seconds=0,
         clip_poll_interval_seconds=0,
         clip_export_timeout_seconds=5,
+        credentials_key_file=tmp_path / "credentials.key",
+        device_test_cooldown_seconds=0,
         _env_file=None,
     )
 

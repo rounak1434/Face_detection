@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from .config import Settings
+from .credentials import CredentialCipher
 from .db import AdminUser, Database
 from .frigate_client import FrigateClient, FrigateError
 from .media import MediaStore
@@ -23,7 +24,9 @@ class AppState:
     frigate: FrigateClient
     store: MediaStore
     throttle: LoginThrottle
+    cipher: CredentialCipher
     background: set[asyncio.Task] = field(default_factory=set)
+    device_tests: dict[str, float] = field(default_factory=dict)  # device id -> last test time
     _cameras: dict[str, dict] | None = None
     _cameras_at: float = 0.0
 

@@ -44,6 +44,13 @@ Frigate is receiving no frames from the camera. Frigate still serves a placehold
 | `Export download returned HTTP 4xx` | The file path differs in this Frigate version. Compare with docs/FRIGATE-API.md. |
 | `Interrupted by a service restart` | The api restarted during the export. Request the clip again. |
 
+## Camera & NVR Setup statuses
+See [CAMERA-SETUP.md](CAMERA-SETUP.md#statuses) for what each status means.
+- **"Address Not Allowed"** for your NVR: its IP is outside `DEVICE_ALLOWED_NETWORKS`. Add its subnet in `.env`, then run `docker compose up -d`.
+- **"Reachable, Stream Not Verified"**: ffprobe is missing where the api runs. That is expected on a Windows dev PC. Inside Docker, ffprobe is part of the api image.
+- **"Stored credential cannot be decrypted"**: the credentials key changed. Re-enter the password, or restore the old `credentials.key` from your backup.
+- **The webcam doesn't start**: the browser needs https or localhost. Allow camera access in the browser's site settings.
+
 ## Sign-in problems
 - **"Too many failed attempts"**: wait 5 minutes.
 - **Forgotten password**: `docker compose exec api ai-surveillance create-admin <username>` resets it.

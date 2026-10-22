@@ -90,6 +90,54 @@ input {
 .pill-pending { background: var(--warn); }
 .pill-failed { background: var(--bad); }
 
+.topbar-left { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tab { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 0.35rem 0.75rem; }
+.tab.active { color: var(--text); border-color: var(--border); background: var(--bg); }
+
+.setup { display: grid; gap: 16px; }
+.page-title { font-size: 1.15rem; }
+.notice { margin: 0; padding: 0.75rem 1rem; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); font-size: 0.9rem; }
+.source { border-left-width: 4px; }
+.source-webcam { border-left-color: #8a6fd6; }
+.source-synthetic { border-left-color: var(--warn); }
+.source-real { border-left-color: var(--accent); }
+.source-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.source-tag { font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.tag-webcam { color: #8a6fd6; border-color: #8a6fd6; }
+.tag-synthetic { color: var(--warn); border-color: var(--warn); }
+.tag-real, .tag-ip_camera, .tag-nvr { color: var(--accent); border-color: var(--accent); }
+.webcam-frame { max-width: 480px; display: grid; place-items: center; }
+.center-text { margin: 0; color: #aaa; }
+.small { font-size: 0.8rem; }
+
+.device { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-top: 0.75rem; }
+.device-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+.device-head h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
+.stream-line { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
+.stream-line code { font-size: 0.8rem; overflow-wrap: anywhere; }
+.detail { color: var(--muted); overflow-wrap: anywhere; }
+.status { font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.status-ok { background: var(--ok); }
+.status-warn { background: var(--warn); }
+.status-bad { background: var(--bad); }
+.status-neutral { background: var(--muted); }
+button.danger { color: var(--bad); border-color: var(--bad); }
+
+.device-form { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-top: 0.75rem; }
+.form-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.form-grid label { display: grid; font-size: 0.85rem; }
+.form-grid .span-2 { grid-column: span 2; }
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .span-2 { grid-column: auto; }
+}
+select { font: inherit; padding: 0.5rem; margin-top: 0.3rem; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text); }
+.checkbox { display: flex; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
+.checkbox input { width: auto; margin: 0; }
+
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: grid; place-items: center; padding: 16px; }
 .modal-body { background: var(--surface); padding: 1rem; border-radius: var(--radius); max-width: min(1100px, 100%); }
 .modal-body img, .modal-body video { max-width: 100%; max-height: 75vh; display: block; }

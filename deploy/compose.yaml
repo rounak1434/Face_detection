@@ -48,6 +48,9 @@ services:
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
       CLIP_DEFAULT_SECONDS: ${CLIP_DEFAULT_SECONDS:-10}
       CLIP_MAX_SECONDS: ${CLIP_MAX_SECONDS:-60}
+      CREDENTIALS_KEY_FILE: /data/credentials.key
+      DEVICE_ALLOWED_NETWORKS: ${DEVICE_ALLOWED_NETWORKS:-192.168.0.0/16,10.0.0.0/8}
+      SYNTHETIC_RTSP_URL: rtsp://test-stream:8554/test
       TZ: ${TZ:-UTC}
     # A named volume, so the non-root api user owns it (a bind mount would
     # be created root-owned and the service could not write its database).

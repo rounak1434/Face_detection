@@ -77,6 +77,13 @@ Running `create-admin` again with the same name resets the password and signs th
 docker compose logs frigate | grep -iA3 password
 ```
 
+**Camera & NVR Setup tab:** click **Add synthetic test source**, then **Test connection**. On the Ubuntu stack it should show **Connected** (h264 1280×720). See [CAMERA-SETUP.md](CAMERA-SETUP.md).
+
+**Back up `credentials.key`.** It encrypts the stored device passwords:
+```bash
+docker compose cp api:/data/credentials.key ./credentials.key.backup && chmod 600 credentials.key.backup
+```
+
 ## 5. Integration tests (real stack, no mocks)
 ```bash
 cd /opt/ai-surveillance/backend

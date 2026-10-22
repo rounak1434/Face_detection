@@ -39,6 +39,8 @@
   The exact Frigate interfaces are listed in [FRIGATE-API.md](FRIGATE-API.md).
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
+- **Camera & NVR setup:** `/api/devices` (CRUD) and `POST /api/devices/<id>/test`. The api checks the address, opens a TCP connection, then runs ffprobe against the device. The browser webcam preview runs entirely in the browser and never reaches the api.
+
 ## Security model
 | Concern | Measure |
 |---|---|
@@ -46,6 +48,7 @@
 | Engine exposure | Frigate port 5000 is unauthenticated, so it is never published. Port 8971 is bound to loopback. The browser never contacts Frigate. |
 | Camera credentials | Kept only in `deploy/.env` (gitignored, chmod 600) and passed only to the Frigate container. API responses never include stream URLs. Probe output masks `user:pass@`. |
 | Transport | HTTPS via Caddy's local CA. HSTS, CSP, no framing. |
+| Camera/NVR setup | Passwords are write-only and AES-256-GCM encrypted. Tests run only for saved devices. The SSRF guard allows private networks only, and the probe connects to the checked IP. Details in [CAMERA-SETUP.md](CAMERA-SETUP.md). |
 | Uploaded and saved files | No client-chosen paths. Strict file-name pattern. Resolved path must stay inside the media directory. |
 | Data residency | No cloud calls at runtime. Model downloads (later milestones) are one-time and documented. |
 

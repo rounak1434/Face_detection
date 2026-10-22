@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, create_engine
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -60,6 +60,29 @@ class Capture(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     frigate_export_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class Device(Base):
+    """A configured video source: real IP camera / NVR, or the synthetic test stream."""
+
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))  # "ip_camera" | "nvr" | "synthetic"
+    host: Mapped[str] = mapped_column(String(253))
+    rtsp_port: Mapped[int] = mapped_column(Integer, default=554)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # AES-GCM ciphertext (credentials.py); the plaintext is never stored or returned.
+    password_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    main_path: Mapped[str] = mapped_column(String(512))
+    sub_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="not_tested")
+    status_detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    test_result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON per stream
+    tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 def make_engine(database_url: str) -> Engine:

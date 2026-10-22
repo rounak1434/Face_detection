@@ -77,12 +77,18 @@ def parse_ffprobe_output(url: str, raw: str) -> ProbeResult:
     )
 
 
+def ffprobe_available() -> bool:
+    return shutil.which("ffprobe") is not None
+
+
 def probe(url: str, timeout_seconds: float = 15.0, transport: str = "tcp") -> ProbeResult:
     ffprobe = shutil.which("ffprobe")
     if ffprobe is None:
         return ProbeResult(mask_credentials(url), False, [], [], "ffprobe not found on PATH")
     cmd = [
         ffprobe, "-v", "error",
+        # Only network streaming protocols; never local files or other schemes.
+        "-protocol_whitelist", "rtsp,rtsps,rtp,srtp,tcp,udp,tls",
         "-rtsp_transport", transport,
         "-show_streams", "-of", "json",
         url,

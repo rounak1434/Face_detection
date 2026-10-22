@@ -15,6 +15,12 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 - A captures gallery with an image viewer and video player.
 - An RTSP probe tool (`ai-surveillance probe`) that reports the codec, resolution and frame rate it actually decoded. Credentials are masked in its output.
 - A synthetic RTSP test stream, for testing without camera hardware.
+- A **Camera & NVR Setup** page. It has three separate kinds of source:
+  - **Browser webcam:** local preview only.
+  - **Synthetic RTSP test source.**
+  - **Real IP cameras and NVRs:** add, edit, remove and test connection. Credentials are encrypted, and tests are limited to the private LAN.
+
+  See [docs/CAMERA-SETUP.md](docs/CAMERA-SETUP.md).
 
 ## Layout
 | Path | What |

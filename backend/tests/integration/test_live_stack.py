@@ -88,6 +88,17 @@ def test_live_websocket_delivers_video(api, camera):
         assert isinstance(data, bytes) and len(data) > 0
 
 
+def test_synthetic_source_connection_test(api):
+    """Real ffprobe inside the api container against the real test stream."""
+    device = api.post("/api/devices/synthetic").json()
+    time.sleep(6)  # respect the per-device test cooldown if the suite is re-run quickly
+    result = api.post(f"/api/devices/{device['id']}/test")
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["status"] == "connected", body
+    assert body["streams"]["main"]["codec"] == "h264"
+
+
 def test_clip_capture(api, camera):
     resp = api.post(f"/api/cameras/{camera}/clip", json={"seconds": 10})
     assert resp.status_code == 202, resp.text

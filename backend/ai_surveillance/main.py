@@ -8,11 +8,12 @@ from fastapi import FastAPI
 
 from .captures import fail_stale_pending
 from .config import Settings, get_settings
+from .credentials import CredentialCipher, load_key
 from .db import Database
 from .deps import AppState
 from .frigate_client import FrigateClient
 from .media import MediaStore
-from .routes import auth, cameras, captures, health, live
+from .routes import auth, cameras, captures, devices, health, live
 from .security import LoginThrottle, purge_expired_sessions
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
             frigate=FrigateClient(settings, transport=frigate_transport),
             store=MediaStore(settings.media_root),
             throttle=LoginThrottle(settings.login_max_failures, settings.login_lockout_seconds),
+            cipher=CredentialCipher(load_key(settings)),
         )
         yield
         state: AppState = app.state.app
@@ -45,7 +47,7 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         db.engine.dispose()
 
     app = FastAPI(title=f"{settings.app_display_name} API", lifespan=lifespan, docs_url=None, redoc_url=None)
-    for module in (health, auth, cameras, captures, live):
+    for module in (health, auth, cameras, captures, devices, live):
         app.include_router(module.router)
     return app
 

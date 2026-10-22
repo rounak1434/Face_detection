@@ -28,6 +28,60 @@ export type Health = {
   frigate: { reachable: boolean; version?: string; error?: string };
 };
 
+export type DeviceKind = "ip_camera" | "nvr" | "synthetic";
+
+export type DeviceStatus =
+  | "not_tested"
+  | "connected"
+  | "unreachable"
+  | "invalid_credentials"
+  | "stream_not_found"
+  | "reachable_unverified"
+  | "address_not_allowed"
+  | "error";
+
+export type StreamTest = {
+  status: DeviceStatus;
+  detail: string;
+  codec: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+};
+
+// What the server returns: never a password or a credential-bearing URL.
+export type Device = {
+  id: string;
+  name: string;
+  kind: DeviceKind;
+  source_label: string;
+  host: string;
+  rtsp_port: number;
+  username: string | null;
+  has_password: boolean;
+  main_stream: string;
+  sub_stream: string | null;
+  main_url_display: string;
+  sub_url_display: string | null;
+  status: DeviceStatus;
+  status_detail: string | null;
+  tested_at: string | null;
+  streams: Partial<Record<"main" | "sub", StreamTest>>;
+  editable: boolean;
+};
+
+export type DeviceInput = {
+  name: string;
+  kind: "ip_camera" | "nvr";
+  host: string;
+  rtsp_port: number;
+  username: string | null;
+  password: string | null; // null on edit = keep the stored password
+  clear_password?: boolean;
+  main_stream: string;
+  sub_stream: string | null;
+};
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -45,6 +99,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     try {
       const body = await resp.json();
       if (typeof body.detail === "string") detail = body.detail;
+      // FastAPI validation errors: [{loc: [..., "field"], msg: "..."}]
+      else if (Array.isArray(body.detail))
+        detail = body.detail
+          .map((e: { loc?: unknown[]; msg?: string }) => {
+            const field = e.loc && e.loc.length > 1 ? String(e.loc[e.loc.length - 1]) : "";
+            const msg = (e.msg ?? "invalid").replace(/^Value error, /, "");
+            return field && field !== "body" ? `${field}: ${msg}` : msg;
+          })
+          .join("; ");
     } catch {
       // non-JSON error body
     }
@@ -69,6 +132,14 @@ export const api = {
   clip: (camera: string, seconds: number) =>
     request<Capture>(`${cam(camera)}/clip`, { method: "POST", body: JSON.stringify({ seconds }) }),
   captures: () => request<Capture[]>("/api/captures"),
+  devices: () => request<Device[]>("/api/devices"),
+  createDevice: (input: DeviceInput) =>
+    request<Device>("/api/devices", { method: "POST", body: JSON.stringify(input) }),
+  updateDevice: (id: string, input: DeviceInput) =>
+    request<Device>(`/api/devices/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteDevice: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  testDevice: (id: string) => request<Device>(`/api/devices/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  addSynthetic: () => request<Device>("/api/devices/synthetic", { method: "POST" }),
   latestFrameUrl: (camera: string) => `${cam(camera)}/latest.jpg?t=${Date.now()}`,
   liveSocketUrl: (camera: string) => {
     const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";

@@ -11,6 +11,28 @@ Results are never upgraded without a recorded test.
 ## Known limitation of the development PC
 This Windows PC has no Docker and no FFmpeg, and WSL is broken. **Frigate, the test stream, the Docker images and the compose stack have never run here.** Everything below that needs them is unverified until the steps in [SETUP.md](SETUP.md) §1–5 are run on Ubuntu.
 
+### WSL2 check on the development PC (read-only, 2026-10-22)
+| Check | Result |
+|---|---|
+| `wsl --status` / `wsl --version` | `Class not registered`, error `Wsl/CallMsi/Install/REGDB_E_CLASSNOTREG` |
+| `wsl -l -v` | Hung, apparently trying to start the WSL installer. Stopped after 2 minutes; no `wsl` or `msiexec` process was left running. |
+| Windows features | `Microsoft-Windows-Subsystem-Linux` **Enabled**; `VirtualMachinePlatform` **Disabled**; `HypervisorPlatform` Disabled |
+| WSL store package | `MicrosoftCorporationII.WindowsSubsystemForLinux` 2.7.3.0 installed, but its service (`WSLService`) is not registered |
+| Hypervisor | `HypervisorPresent=True` |
+
+**Conclusion:** WSL2 is **not usable** as the system stands: VirtualMachinePlatform is off and the WSL package registration is broken. A repair needs administrator rights. One possible repair is to enable VirtualMachinePlatform, reboot, and run `wsl --update` or reinstall WSL from the Microsoft Store. **Not attempted.** It needs your approval and a reboot, and the Ubuntu PC is the intended target anyway.
+
+## Camera & NVR Setup, 2026-10-22
+| Item | Status | Evidence |
+|---|---|---|
+| Device CRUD, encrypted credentials, password never returned or logged, SSRF guard, input validation, status classification, cooldown | Mock-only network; rules verified | `tests/unit/test_devices.py` (60 tests). TCP, DNS and ffprobe are replaced by fakes. |
+| Setup page: three separated source types, status labels, form, edit keeps the password, remove, webcam start/stop/denied | Verified (jsdom) | `src/test/setup-page.test.tsx` (11 tests) |
+| Smoke test in a real browser, Windows, no Docker | Verified | Synthetic source → **Unreachable** ("Host 'test-stream' could not be resolved"), as expected with no stack. A link-local host was refused with a clear message. A saved NVR showed **Not Tested** and a masked URL. The raw `/api/devices` response and the server log did not contain the test password. |
+| Webcam preview in a real browser | Not exercised | Needs your camera-permission click. jsdom tests cover the logic only. |
+| Synthetic source → **Connected** through the real stack | Unverified (host) | `test_synthetic_source_connection_test` in `tests/integration` |
+| Real CP Plus device → **Connected** | Unverified (hardware) | Needs the device on the LAN, plus ffprobe (Docker api image, or FFmpeg on Windows) |
+| Saved devices used by the engine | Not implemented | Live view still uses `deploy/.env` streams |
+
 ## Validation review, 2026-10-22 (before milestone 2)
 Defects found by checking our code and config against the Frigate v0.18.2 source. The mocked tests had passed with every one of these:
 

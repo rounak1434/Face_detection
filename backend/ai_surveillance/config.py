@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     clip_export_timeout_seconds: float = 180.0
     clip_poll_interval_seconds: float = 2.0
 
+    # Camera/NVR credentials are encrypted with this key (32 bytes, base64).
+    # If unset, a key is generated once and kept in credentials_key_file.
+    credentials_key: SecretStr | None = None
+    credentials_key_file: Path = Path("./data/credentials.key")
+
+    # Connection tests may only reach devices in these networks (private
+    # LAN ranges by default). Loopback, link-local and public addresses are
+    # always refused.
+    device_allowed_networks: str = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+    device_test_timeout_seconds: float = 10.0
+    device_test_cooldown_seconds: float = 5.0
+
+    # The synthetic RTSP source is defined by the server, never by the browser.
+    synthetic_rtsp_url: str = "rtsp://test-stream:8554/test"
+
 
 @lru_cache
 def get_settings() -> Settings:
