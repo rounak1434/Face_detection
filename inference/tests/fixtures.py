@@ -1,6 +1,6 @@
-"""Synthetic test images, generated in code. No photographs of people are
-stored in the repository; a real-face check uses a local file named by the
-FACE_FIXTURE environment variable (see tests/test_model_yunet.py)."""
+"""Synthetic test images, generated in code. The only photograph in the
+repository is the public-domain portrait documented in
+tests/data/public_domain/README.md."""
 
 import io
 import struct

@@ -2,6 +2,8 @@
 
   ai-surveillance create-admin <username>       prompts for a password
   ai-surveillance probe --env CAMERA_MAIN_URL    checks streams with ffprobe
+  ai-surveillance db status                      shows the schema revision (read-only)
+  ai-surveillance db upgrade                     backs up, then migrates to the latest revision
 """
 
 import argparse
@@ -44,6 +46,24 @@ def create_admin(username: str) -> int:
     return 0
 
 
+def db_command(action: str) -> int:
+    from .migrations import SchemaMismatch, status
+
+    db = Database(get_settings().database_url)
+    try:
+        if action == "status":
+            print(json.dumps(status(db.engine), indent=2))
+            return 0
+        try:
+            print(f"Database: {db.migrate()}")
+        except SchemaMismatch as exc:
+            print(f"Not migrated: {exc}", file=sys.stderr)
+            return 3
+        return 0
+    finally:
+        db.engine.dispose()
+
+
 def probe_urls(urls: list[str], timeout: float) -> int:
     results = [probe(url, timeout_seconds=timeout).to_dict() for url in urls]
     print(json.dumps(results, indent=2))
@@ -62,10 +82,14 @@ def main(argv: list[str] | None = None) -> int:
         help="read a URL from this environment variable (keeps passwords out of shell history)",
     )
     p_probe.add_argument("--timeout", type=float, default=15.0)
+    p_db = sub.add_parser("db", help="database schema status and migration")
+    p_db.add_argument("action", choices=["status", "upgrade"])
     args = parser.parse_args(argv)
 
     if args.command == "create-admin":
         return create_admin(args.username)
+    if args.command == "db":
+        return db_command(args.action)
     urls = list(args.urls)
     for var in args.env:
         value = os.environ.get(var)

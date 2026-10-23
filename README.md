@@ -30,7 +30,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 | `inference/` | Internal face-analysis service (FastAPI, OpenCV). Package `inference_service`. |
 | `frontend/` | Web UI (React + TypeScript + Vite). |
 | `deploy/` | Docker Compose stack: Frigate, api, web (Caddy HTTPS) and an optional test stream. Also holds the systemd unit. |
-| `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), and the Frigate API contract (`FRIGATE-API.md`). |
+| `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), the Frigate API contract (`FRIGATE-API.md`), AI analysis (`AI-ANALYSIS.md`) and database migrations and backups (`DATABASE.md`). |
 
 ## Quick start
 **Ubuntu 22.04/24.04 with Docker**, using the synthetic test stream. No camera is needed. Full guide: [docs/SETUP.md](docs/SETUP.md).

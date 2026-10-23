@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     detection_max_side: int = Field(default=1280, ge=160)
     crop_margin: float = Field(default=0.2, ge=0.0, le=1.0)
     crop_jpeg_quality: int = Field(default=90, ge=50, le=100)
+    # Faces whose shorter box side is below this are flagged "small" (still returned).
+    small_face_px: int = Field(default=40, ge=1)
 
 
 @lru_cache

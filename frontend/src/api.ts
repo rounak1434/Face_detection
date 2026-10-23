@@ -85,22 +85,29 @@ export type DeviceInput = {
 
 export type Box = { x: number; y: number; w: number; h: number };
 
+export type FaceQuality = {
+  face_px: number;
+  small_face: boolean;
+  touches_edge: boolean;
+  sharpness: number | null;
+};
+
 export type AnalysedFace = {
   index: number;
   box: Box;
   score: number;
   keypoints5: [number, number][];
-  crop_box: Box | null;
-  crop_data_url: string | null;
+  quality: FaceQuality | null;
+  crop: { box: Box; width: number; height: number; data_url: string } | null;
 };
 
 export type FaceAnalysis = {
+  status: "faces_detected" | "no_faces_detected";
   source: "inference";
   image: { width: number; height: number; format: string };
   faces: AnalysedFace[];
   face_count: number;
-  message: string | null;
-  parameters: { min_score: number; max_faces: number; crop_margin: number } | null;
+  parameters: { min_score: number; max_faces: number; crop_margin: number; small_face_px?: number } | null;
   model: { name: string; version: string };
   processing_ms: number | null;
   stored: boolean;
@@ -115,11 +122,15 @@ export type ModelInfo = {
   license: string;
   license_url: string;
   source: string;
+  sha256: string | null;
   notes: string;
   runtime: string;
 };
 
-export type ModelsResponse = { inference: { reachable: boolean; detail?: string }; models: ModelInfo[] };
+export type ModelsResponse = {
+  inference: { reachable: boolean; ready?: boolean; detail?: string };
+  models: ModelInfo[];
+};
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
@@ -128,10 +139,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // FormData sets its own multipart Content-Type (with boundary); JSON otherwise.
+  const defaults: Record<string, string> = init.body instanceof FormData ? {} : { "Content-Type": "application/json" };
   const resp = await fetch(path, {
     credentials: "same-origin",
     ...init,
-    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+    headers: { ...defaults, ...((init.headers as Record<string, string>) ?? {}) },
   });
   if (!resp.ok) {
     let detail = resp.statusText;
@@ -182,13 +195,15 @@ export const api = {
   testDevice: (id: string) => request<Device>(`/api/devices/${encodeURIComponent(id)}/test`, { method: "POST" }),
   addSynthetic: () => request<Device>("/api/devices/synthetic", { method: "POST" }),
   models: () => request<ModelsResponse>("/api/models"),
-  // The file is sent as the raw body with its own image type.
-  analyseFaces: (file: File, minScore?: number) =>
-    request<FaceAnalysis>(`/api/analysis/faces${minScore !== undefined ? `?min_score=${minScore}` : ""}`, {
+  // Multipart upload, field "file". The server ignores the file name and checks the bytes.
+  analyseFaces: (file: File, minScore?: number) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<FaceAnalysis>(`/api/analysis/faces${minScore !== undefined ? `?min_score=${minScore}` : ""}`, {
       method: "POST",
-      body: file,
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-    }),
+      body: form,
+    });
+  },
   latestFrameUrl: (camera: string) => `${cam(camera)}/latest.jpg?t=${Date.now()}`,
   liveSocketUrl: (camera: string) => {
     const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";

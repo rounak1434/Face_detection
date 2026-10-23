@@ -26,13 +26,17 @@ export function ModelStatus({ models }: { models: ModelsResponse | null }) {
             <span className={`status status-${m.status === "ready" ? "ok" : "bad"}`}>{LABELS[m.status] ?? m.status}</span>{" "}
             <strong>{m.name}</strong> {m.version} · {m.task.replace("_", " ")} ·{" "}
             <a href={m.license_url} target="_blank" rel="noreferrer">{m.license}</a> · {m.runtime}
+            {m.sha256 && <span className="muted small"> · sha256 {m.sha256.slice(0, 12)}…</span>}
             {m.detail && <span className="muted small"> · {m.detail}</span>}
           </li>
         ))}
       </ul>
+      {models.inference.ready === false && (
+        <p className="error small">The inference service is running but no detector is loaded, so analysis will fail.</p>
+      )}
       <p className="muted small">
-        Not available yet: recognition, verification, similarity, landmarks beyond 5 points, age and gender, expression,
-        liveness.
+        Not implemented yet (future phases): recognition, verification, similarity, facial landmarks, age and gender,
+        expression, liveness.
       </p>
     </section>
   );

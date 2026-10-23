@@ -42,8 +42,11 @@
   The exact Frigate interfaces are listed in [FRIGATE-API.md](FRIGATE-API.md).
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
-- **AI analysis:** `POST /api/analysis/faces` streams the uploaded image, with checks on size, type and magic bytes, to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints and crops. Nothing is stored. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
-- **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`). A database created before migrations existed is stamped as baseline `0001_baseline`, not altered.
+- **AI analysis:** `POST /api/analysis/faces` takes a multipart upload, checks its size, structure and magic bytes, and forwards the image bytes to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints, crops and quality hints. Nothing is stored. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
+- **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`).
+  - A database created before migrations existed is checked column by column against `0001_baseline`. Only an exact match is backed up and stamped; anything else stops startup unchanged.
+  - Any existing SQLite file is backed up before a schema change.
+  - Details in [DATABASE.md](DATABASE.md).
 - **Camera & NVR setup:** `/api/devices` (CRUD) and `POST /api/devices/<id>/test`. The api checks the address, opens a TCP connection, then runs ffprobe against the device. The browser webcam preview runs entirely in the browser and never reaches the api.
 
 ## Security model

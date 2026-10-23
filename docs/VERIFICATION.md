@@ -11,25 +11,23 @@ Results are never upgraded without a recorded test.
 ## Known limitation of the development PC
 This Windows PC has no Docker and no FFmpeg, and WSL is broken. **Frigate, the test stream, the Docker images and the compose stack have never run here.** Everything below that needs them is unverified until the steps in [SETUP.md](SETUP.md) §1–5 are run on Ubuntu.
 
-## Phase 1: AI foundations, 2026-10-23 (Windows dev PC, Python 3.12.10, OpenCV 4.14.0)
+## Phase 1: AI foundations, 2026-10-23 (Windows dev PC, Python 3.12.10, OpenCV 4.14.0, no Docker)
 | Item | Status | Evidence |
 |---|---|---|
 | YuNet model download matches the pinned SHA-256 and size | Verified | `python -m inference_service.download`: "downloaded and verified (232589 bytes)" |
-| Real YuNet on a real face | Verified (dev PC) | Public-domain NASA portrait (Wikimedia Commons, NASA photo S69-31741), used locally only and **not committed**: 1 face, score 0.939, 5 keypoints inside the box. Grey image: 0 faces. |
-| Real YuNet: no faces in synthetic images; degenerate sizes | Verified (dev PC) | `inference/tests/test_model_yunet.py` |
-| YuNet garbage detections on short inputs: found and fixed | Verified (dev PC) | Before: 16/300 spurious faces on 20×2000. After padding and keypoint check: 0/300 for every degenerate size tested. |
-| Image decoding: formats, EXIF, alpha, corrupt files, byte and pixel limits | Verified | `inference/tests/test_imaging.py` |
-| Inference HTTP contract and error codes | Verified (fake detector) | `inference/tests/test_api.py` |
-| Inference test suite total | Verified | **30 passed** with `FACE_FIXTURE` set; 29 passed + 1 skipped without it; 24 passed + 6 skipped with no model present |
-| Backend unit tests total | Verified (mocked engine/inference) | **160 passed**; 11 integration tests skipped without a stack |
-| Frontend tests and build | Verified | vitest **23 passed**; `tsc -b && vite build` succeeds |
-| API `/api/analysis/faces` and `/api/models` contract and error mapping | Mock-only inference | `backend/tests/unit/test_analysis.py` |
-| API → real inference service, end to end (no Docker) | Verified (dev PC) | Both run as local processes. Face photo gave 1 face (box 513,231,153×199; crop returned; `stored:false`). Blank PNG: "No face detected". GIF: 415. Truncated JPEG: 400. Anonymous request: 401. |
-| Analysis page in a real browser with real inference | Verified (dev PC) | 1 green box at the correct position, 5 keypoints, crop rendered, "Real model inference yunet 2023mar · 1 face · 480×600 · 53.5 ms". Header showed "AI ready". |
-| Alembic baseline: fresh DB, legacy `create_all` DB stamped not altered, models match migrations, downgrade/upgrade, WAL on | Verified | `backend/tests/unit/test_migrations.py`, plus the existing smoke DB: "stamped as 0001_baseline" at startup |
+| Real YuNet on real faces | Verified (dev PC) | Committed public-domain fixture (NASA S69-31741, see `inference/tests/data/public_domain/README.md`): 1 face (score 0.94); 2 and 3 copies give 2 and 3 faces at the right positions; face 4 px from the corner detected with the crop clipped to 0; face cut by the edge detected and flagged; ~24 px face detected and flagged small; 3× upscaled image mapped back correctly |
+| YuNet garbage detections on short inputs: found and fixed | Verified (dev PC) | Before: 16/300 spurious faces on 20×2000. After padding and keypoint check: 0/300 for every degenerate size tested. Regression test repeats it. |
+| Inference tests | Verified | **48 passed, 1 skipped** (only the optional own-photo test `FACE_FIXTURE`). With no model present: 33 passed, 16 skipped (real-model tests skip, as intended). |
+| Backend unit tests (mocked engine and inference) | Verified | **174 passed**; the 12 integration tests are skipped without a stack |
+| Migrations | Verified | `test_migrations.py` (15). Fresh DB created. Legacy `create_all` DB with data in all 4 tables verified column by column, backed up and stamped, data intact. Legacy DBs with an extra or missing column, or a missing table, refused and untouched. Unrelated DB refused. `db status` read-only. Models match migrations. Downgrade/upgrade. WAL, busy_timeout, foreign keys on. The baseline also matches a real pre-migration DB file (checked on a disposable copy). |
+| Analysis API (multipart) contract, validation and error mapping | Mock-only inference | `test_analysis.py` (27) |
+| API → real inference, end to end (local processes, no Docker) | Verified (dev PC) | Fixture: `faces_detected`, 1 face, crop 106×142, quality included, `stored:false`. 3-copy PNG: 3 faces. Blank WebP: `no_faces_detected`. GIF 415, truncated JPEG 400, empty 400, non-multipart 415, anonymous 401, 48 MP PNG 413. |
+| Analysis page in a real browser with real inference | Verified (dev PC) | 1 box, 5 keypoints, crop 106×142 and metadata, "Real model inference yunet 2023mar". Overlay alignment checked at a reduced display size (430×538 for a 480×600 image): the box drew at exactly the scaled model coordinates. Clear resets the page. |
+| Frontend tests and build | Verified | vitest **26 passed**; `tsc -b && vite build` succeeds |
 | Migration scripts shipped in the built package | Verified | `pip wheel` contents include `migrations/versions/0001_baseline.py` and `script.py.mako` |
-| Inference Docker image builds (opencv-headless on `python:3.12-slim`); model download inside the build | Unverified (host) | No Docker here |
-| Inference in the compose stack; `doctor.sh` inference checks; integration tests for analysis | Unverified (host) | `bash run-integration-tests.sh`, optionally with `IT_FACE_IMAGE` |
+| **Inference Docker image build** (opencv-headless on `python:3.12-slim`, model download in the build) | **Blocked: no Docker on this PC** | Run `docker compose build inference` on Ubuntu |
+| **Compose stack with inference**; `doctor.sh` inference checks; integration tests incl. real face via the mounted fixture | **Blocked: no Docker on this PC** | `bash run-integration-tests.sh` on Ubuntu |
+| Existing compose profiles and NVIDIA override unaffected | Static check only | `test_deploy_config.py`: the override still only changes `frigate`; `inference` has no ports. Not built. |
 | Detection accuracy on CP Plus footage; speed on Ubuntu | Not measured | Evaluation protocol in the roadmap |
 
 ### WSL2 check on the development PC (read-only, 2026-10-22)

@@ -3,25 +3,25 @@
 Only the api container calls it, over the private Docker network. It keeps
 nothing: images are analysed in memory and discarded.
 
-    GET  /v1/health
-    GET  /v1/models
-    POST /v1/detect   body: raw image bytes (JPEG/PNG/WebP)
+    GET  /health          liveness plus whether detection can actually run
+    GET  /v1/health       same (kept for the api's health check)
+    GET  /v1/models       registry: name, version, source, checksum, licence, status
+    POST /v1/detect       body: raw image bytes (JPEG/PNG/WebP)
 """
 
-import base64
 import logging
 import time
 from contextlib import asynccontextmanager
 
 import cv2
-import numpy as np
 from fastapi import FastAPI, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from . import __version__
-from .adapters.base import DetectedFace, FaceDetector
+from .adapters.base import FaceDetector
 from .config import Settings, get_settings
+from .cropping import make_crop, quality
 from .imaging import ImageError, TooLarge, decode
 from .registry import LOAD_ERROR, MODELS, READY, YUNET, verify_file
 
@@ -30,19 +30,6 @@ log = logging.getLogger(__name__)
 
 def _error(status: int, code: str, detail: str, **extra) -> JSONResponse:
     return JSONResponse({"error": code, "detail": detail, **extra}, status_code=status)
-
-
-def crop_face(image: np.ndarray, face: DetectedFace, margin: float, quality: int) -> tuple[dict, str]:
-    """Crop with a margin around the box, clipped to the image; returns (crop box, base64 JPEG)."""
-    height, width = image.shape[:2]
-    b = face.box
-    mx, my = round(b.w * margin), round(b.h * margin)
-    x0, y0 = max(0, b.x - mx), max(0, b.y - my)
-    x1, y1 = min(width, b.x + b.w + mx), min(height, b.y + b.h + my)
-    ok, jpeg = cv2.imencode(".jpg", image[y0:y1, x0:x1], [cv2.IMWRITE_JPEG_QUALITY, quality])
-    if not ok:
-        raise RuntimeError("JPEG encoding of a face crop failed")
-    return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}, base64.b64encode(jpeg.tobytes()).decode()
 
 
 def create_app(settings: Settings | None = None, detector: FaceDetector | None = None) -> FastAPI:
@@ -63,18 +50,27 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
                     app.state.detector = YuNetDetector(settings.models_dir / YUNET.file_name,
                                                        settings.detection_max_side)
                 except Exception as exc:  # noqa: BLE001 - reported via /v1/models
-                    status, detail = LOAD_ERROR, f"{type(exc).__name__}: {exc}"[:300]
+                    status, detail = LOAD_ERROR, f"{type(exc).__name__}: model could not be loaded"
+                    log.exception("Loading %s failed", YUNET.name)
             app.state.status[YUNET.name] = (status, detail)
             log.info("Model %s: %s%s", YUNET.name, status, f" ({detail})" if detail else "")
         yield
 
     app = FastAPI(title="AI Surveillance inference", version=__version__, lifespan=lifespan,
-                  docs_url=None, redoc_url=None)
+                  docs_url=None, redoc_url=None, openapi_url=None)
 
-    @app.get("/v1/health")
-    def health(request: Request) -> dict:
+    def health_payload(request: Request) -> dict:
         statuses = {name: s for name, (s, _) in request.app.state.status.items()}
-        return {"status": "ok", "version": __version__, "models": statuses}
+        return {
+            "status": "ok",
+            "version": __version__,
+            # True only when a detector object is loaded, i.e. /v1/detect can run.
+            "ready": request.app.state.detector is not None,
+            "models": statuses,
+        }
+
+    app.get("/health")(health_payload)
+    app.get("/v1/health")(health_payload)
 
     @app.get("/v1/models")
     def models(request: Request) -> list[dict]:
@@ -102,7 +98,7 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
             return _error(503, "model_unavailable", detail or "Face detector is not loaded",
                           model=YUNET.name, model_status=status)
 
-        # Read at most one byte past the limit, so oversized bodies are not buffered.
+        # Read at most one chunk past the limit, so oversized bodies are not buffered.
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
@@ -127,10 +123,14 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
                     "box": face.box.__dict__,
                     "score": face.score,
                     "keypoints5": [list(p) for p in face.keypoints5],
+                    "quality": quality(image, face, settings.small_face_px),
+                    "crop": None,
                 }
                 if crops:
-                    crop_box, crop_b64 = crop_face(image, face, settings.crop_margin, settings.crop_jpeg_quality)
-                    item["crop"] = {"box": crop_box, "jpeg_base64": crop_b64}
+                    crop = make_crop(image, face, settings.crop_margin, settings.crop_jpeg_quality)
+                    if crop is not None:
+                        item["crop"] = {"box": crop.box, "width": crop.width, "height": crop.height,
+                                        "jpeg_base64": crop.jpeg_base64}
                 payload.append(item)
         except Exception:  # noqa: BLE001
             log.exception("Detection failed")
@@ -138,10 +138,12 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
 
         height, width = image.shape[:2]
         return {
+            "status": "faces_detected" if payload else "no_faces_detected",
             "image": {"width": width, "height": height, "format": mime},
             "faces": payload,
             "face_count": len(payload),
-            "parameters": {"min_score": threshold, "max_faces": limit, "crop_margin": settings.crop_margin},
+            "parameters": {"min_score": threshold, "max_faces": limit, "crop_margin": settings.crop_margin,
+                           "small_face_px": settings.small_face_px},
             "model": {"name": det.name, "version": det.version},
             "processing_ms": round((time.perf_counter() - started) * 1000, 1),
         }

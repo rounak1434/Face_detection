@@ -113,36 +113,54 @@ def _tiny_png(width=64, height=48) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
+def _analyse(api, data: bytes, name="upload.png", ctype="image/png"):
+    return api.post("/api/analysis/faces", files={"file": (name, data, ctype)})
+
+
 def test_face_model_ready(api):
     body = api.get("/api/models").json()
-    assert body["inference"]["reachable"], body
+    assert body["inference"]["reachable"] and body["inference"]["ready"], body
     yunet = next(m for m in body["models"] if m["name"] == "yunet")
     assert yunet["status"] == "ready", yunet
 
 
 def test_face_analysis_no_face(api):
-    resp = api.post("/api/analysis/faces", content=_tiny_png(), headers={"Content-Type": "image/png"})
+    resp = _analyse(api, _tiny_png())
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["source"] == "inference" and body["model"]["name"] == "yunet"
-    assert body["faces"] == [] and body["message"] == "No face detected"
+    assert body["status"] == "no_faces_detected" and body["faces"] == []
 
 
 def test_face_analysis_rejects_non_image(api):
-    resp = api.post("/api/analysis/faces", content=b"GIF89a....", headers={"Content-Type": "image/png"})
-    assert resp.status_code == 415
+    assert _analyse(api, b"GIF89a....").status_code == 415
 
 
-@pytest.mark.skipif(not os.environ.get("IT_FACE_IMAGE"), reason="IT_FACE_IMAGE not set")
-def test_face_analysis_real_face(api):
-    path = os.environ["IT_FACE_IMAGE"]
+def test_face_analysis_requires_login():
+    if not BASE:
+        pytest.skip("IT_BASE_URL not set")
+    resp = httpx.post(f"{BASE}/api/analysis/faces", files={"file": ("x.png", _tiny_png(), "image/png")},
+                      verify=VERIFY, timeout=30)
+    assert resp.status_code == 401
+
+
+def _face_files() -> list[str]:
+    paths = [os.environ.get("IT_PD_FACE_IMAGE"), os.environ.get("IT_FACE_IMAGE")]
+    return [p for p in paths if p]
+
+
+@pytest.mark.parametrize("path", _face_files() or [None], ids=lambda p: os.path.basename(p) if p else "none")
+def test_face_analysis_real_face(api, path):
+    if path is None:
+        pytest.skip("no face image provided (run-integration-tests.sh mounts the public-domain fixture)")
     ctype = "image/png" if path.lower().endswith(".png") else "image/jpeg"
     with open(path, "rb") as fh:
-        resp = api.post("/api/analysis/faces", content=fh.read(), headers={"Content-Type": ctype})
+        resp = _analyse(api, fh.read(), os.path.basename(path), ctype)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["face_count"] >= 1
-    assert body["faces"][0]["crop_data_url"].startswith("data:image/jpeg;base64,")
+    assert body["status"] == "faces_detected" and body["face_count"] >= 1
+    crop = body["faces"][0]["crop"]
+    assert crop["data_url"].startswith("data:image/jpeg;base64,") and crop["width"] > 0 and crop["height"] > 0
 
 
 def test_clip_capture(api, camera):

@@ -27,6 +27,10 @@ if [ -n "${IT_FACE_IMAGE:-}" ]; then
   face_args=(-v "$(realpath "$IT_FACE_IMAGE"):/fixtures/face.$ext:ro" -e "IT_FACE_IMAGE=/fixtures/face.$ext")
 fi
 
+# The public-domain portrait used by the inference tests (see its README).
+pd_dir="$(cd .. && pwd)/inference/tests/data/public_domain"
+face_args+=(-v "$pd_dir:/fixtures/pd:ro" -e "IT_PD_FACE_IMAGE=/fixtures/pd/nasa_s69-31741_480x600.jpg")
+
 echo "Testing https://$site/ (camera: ${IT_CAMERA:-entrance})"
 docker run --rm --network host \
   -v "$(cd .. && pwd)/backend:/src:ro" "${face_args[@]}" \

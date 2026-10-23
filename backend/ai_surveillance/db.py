@@ -110,11 +110,15 @@ class Database:
         self.engine = make_engine(database_url)
         self.sessionmaker = sessionmaker(self.engine, expire_on_commit=False)
 
-    def migrate(self) -> str:
-        """Bring the schema to the latest Alembic revision; returns what was done."""
+    def migrate(self, backup: bool = True) -> str:
+        """Bring the schema to the latest Alembic revision; returns what was done.
+
+        Raises migrations.SchemaMismatch, without changing anything, for a
+        pre-migration database that does not match the baseline exactly.
+        """
         from .migrations import upgrade_to_head
 
-        return upgrade_to_head(self.engine)
+        return upgrade_to_head(self.engine, backup=backup)
 
     def session(self) -> Iterator[Session]:
         with self.sessionmaker() as session:

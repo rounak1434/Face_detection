@@ -92,7 +92,8 @@ Never commit `deploy/.env`. It is gitignored.
 | Logs | `docker compose logs -f frigate` (or `api`, `inference`, `web`, `test-stream`) |
 | Stop, keeping all data | `docker compose down` |
 | Restart one service | `docker compose restart api` |
-| Update after `git pull` | `docker compose up -d --build` |
+| Update after `git pull` | Back up first ([DATABASE.md](DATABASE.md)), then `docker compose up -d --build`. The api migrates the database on start. |
+| Database schema status | `docker compose exec api ai-surveillance db status` |
 | Delete **all** data | `docker compose down -v && sudo rm -rf storage`. This deletes recordings, captures, accounts and the credentials key. |
 
 The first start downloads the Frigate, mediamtx, Python, Node and Caddy images. It then builds the api, inference and web images. Building the inference image also downloads the YuNet face model (about 230 KB) from OpenCV Zoo and verifies its SHA-256. A mismatch stops the build. Frigate needs another minute or two to come up. To watch it:

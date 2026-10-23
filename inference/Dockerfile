@@ -15,6 +15,6 @@ USER inference
 EXPOSE 8100
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/v1/health', timeout=4)"
+  CMD python -c "import json,sys,urllib.request; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4))['ready'] else 1)"
 
 CMD ["uvicorn", "--factory", "inference_service.main:app", "--host", "0.0.0.0", "--port", "8100", "--workers", "1"]

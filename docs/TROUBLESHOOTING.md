@@ -20,6 +20,17 @@ cd ~/ai-surveillance/deploy && bash doctor.sh
 | `test-stream` restarting, or mediamtx config errors | Check `docker compose logs test-stream` and report the message. The config is `deploy/test-stream/mediamtx.yml`. |
 | Nothing from `test-stream` in `docker compose ps` | `COMPOSE_PROFILES=test-stream` is missing from `.env`. Add it back, or use `docker compose --profile test-stream up -d`. |
 
+## The api keeps restarting with "does not match the baseline"
+The database was created before migrations existed and differs from what this version expects. **Nothing was changed.** The log lists the differing tables and columns:
+```bash
+docker compose logs api | grep -i baseline
+```
+Check it without starting the api:
+```bash
+docker compose run --rm --no-deps api ai-surveillance db status
+```
+Do not delete the database. Keep the logged differences and see [DATABASE.md](DATABASE.md).
+
 ## "AI unreachable", or the AI analysis page says the model is unavailable
 1. **Is the service running?**
    ```bash

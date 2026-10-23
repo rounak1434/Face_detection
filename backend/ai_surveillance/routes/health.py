@@ -19,10 +19,11 @@ async def _frigate(state: AppState) -> dict:
 
 async def _inference(state: AppState) -> dict:
     try:
-        models = (await state.inference.health()).get("models", {})
+        health = await state.inference.health()
     except InferenceUnavailable as exc:
         return {"reachable": False, "error": str(exc)}
-    return {"reachable": True, "models_ready": all(s == "ready" for s in models.values()) and bool(models)}
+    # "ready" is true only when the detector is actually loaded and can run.
+    return {"reachable": True, "models_ready": health.get("ready") is True}
 
 
 @router.get("/api/health")

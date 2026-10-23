@@ -17,6 +17,8 @@ deploy/frigate/*
 *.engine
 
 inference/models/
+# Documented, public-domain test fixtures (see the README inside).
+!inference/tests/data/
 
 # Python
 __pycache__/

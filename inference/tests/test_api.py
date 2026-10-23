@@ -46,12 +46,15 @@ def test_detect_returns_boxes_keypoints_and_crops(settings):
     body = resp.json()
     assert body["image"] == {"width": 320, "height": 240, "format": "image/jpeg"}
     assert body["face_count"] == 2
+    assert body["status"] == "faces_detected"
     first = body["faces"][0]
     assert first["box"] == {"x": 100, "y": 50, "w": 80, "h": 100}
     assert len(first["keypoints5"]) == 5
     # 20% margin, clipped to the image.
     assert first["crop"]["box"] == {"x": 84, "y": 30, "w": 112, "h": 140}
+    assert (first["crop"]["width"], first["crop"]["height"]) == (112, 140)
     assert base64.b64decode(first["crop"]["jpeg_base64"])[:3] == b"\xff\xd8\xff"
+    assert first["quality"]["face_px"] == 80 and first["quality"]["small_face"] is False
     assert body["faces"][1]["crop"]["box"]["x"] == 2
     assert body["model"] == {"name": "fake", "version": "test"}
 
@@ -60,6 +63,7 @@ def test_no_face_is_a_normal_result(settings):
     with client_with(settings, FakeDetector([])) as c:
         body = c.post("/v1/detect", content=fx.encode(fx.solid(), "PNG")).json()
     assert body["faces"] == [] and body["face_count"] == 0
+    assert body["status"] == "no_faces_detected"
 
 
 def test_threshold_and_limit_parameters(settings):
@@ -69,7 +73,7 @@ def test_threshold_and_limit_parameters(settings):
         assert body["face_count"] == 1
         body = c.post("/v1/detect?max_faces=2&min_score=0.7&crops=false", content=fx.encode(fx.solid(), "JPEG")).json()
         assert body["face_count"] == 2
-        assert "crop" not in body["faces"][0]
+        assert body["faces"][0]["crop"] is None
 
 
 @pytest.mark.parametrize(
@@ -99,13 +103,14 @@ def test_model_missing_reports_unavailable(settings):
     with TestClient(create_app(settings)) as c:
         resp = c.post("/v1/detect", content=fx.encode(fx.solid(), "JPEG"))
         models = c.get("/v1/models").json()
-        health = c.get("/v1/health").json()
+        health = c.get("/health").json()
     assert resp.status_code == 503
     assert resp.json()["error"] == "model_unavailable"
     assert resp.json()["model_status"] == "missing"
     assert models[0]["name"] == "yunet" and models[0]["status"] == "missing"
     assert models[0]["license"] == "MIT"
-    assert health["models"] == {"yunet": "missing"}
+    assert health["models"] == {"yunet": "missing"} and health["ready"] is False
+    assert str(settings.models_dir) not in resp.text  # no filesystem paths leaked
 
 
 def test_corrupted_model_file_is_not_loaded(settings):
@@ -115,6 +120,33 @@ def test_corrupted_model_file_is_not_loaded(settings):
         resp = c.post("/v1/detect", content=fx.encode(fx.solid(), "JPEG"))
     assert status == "checksum_mismatch"
     assert resp.status_code == 503
+
+
+def test_model_that_fails_to_load_is_reported_not_ready(settings, monkeypatch):
+    import inference_service.main as main_mod
+
+    monkeypatch.setattr(main_mod, "verify_file", lambda spec, d: ("ready", None))
+
+    class Exploding:
+        def __init__(self, *a, **k):
+            raise RuntimeError("bad onnx graph at /secret/path")
+
+    import inference_service.adapters.yunet as yunet_mod
+
+    monkeypatch.setattr(yunet_mod, "YuNetDetector", Exploding)
+    with TestClient(create_app(settings)) as c:
+        health = c.get("/health").json()
+        model = c.get("/v1/models").json()[0]
+        resp = c.post("/v1/detect", content=fx.encode(fx.solid(), "JPEG"))
+    assert health["ready"] is False and model["status"] == "load_error"
+    assert resp.status_code == 503 and resp.json()["model_status"] == "load_error"
+    assert "/secret/path" not in resp.text and "/secret/path" not in str(model)
+
+
+def test_health_ready_with_loaded_detector(settings):
+    with client_with(settings, FakeDetector()) as c:
+        assert c.get("/health").json()["ready"] is True
+        assert c.get("/v1/health").json()["ready"] is True
 
 
 def test_detector_crash_is_contained(settings):

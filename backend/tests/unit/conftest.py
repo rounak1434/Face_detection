@@ -58,7 +58,9 @@ def frigate():
     with respx.mock(base_url=FRIGATE, assert_all_called=False) as mock:
         # The inference service is mocked in the same router so health checks
         # never touch the network; tests override these routes as needed.
-        mock.get(f"{INFERENCE}/v1/health").respond(200, json={"status": "ok", "models": {"yunet": "ready"}})
+        mock.get(f"{INFERENCE}/v1/health").respond(
+            200, json={"status": "ok", "ready": True, "models": {"yunet": "ready"}}
+        )
         mock.get("/api/version").respond(200, text="0.18.2-test")
         mock.get("/api/config").respond(200, json=FRIGATE_CONFIG)
         mock.get("/api/stats").respond(200, json=FRIGATE_STATS)
