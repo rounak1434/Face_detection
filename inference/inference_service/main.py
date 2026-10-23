@@ -53,7 +53,9 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
                     status, detail = LOAD_ERROR, f"{type(exc).__name__}: model could not be loaded"
                     log.exception("Loading %s failed", YUNET.name)
             app.state.status[YUNET.name] = (status, detail)
-            log.info("Model %s: %s%s", YUNET.name, status, f" ({detail})" if detail else "")
+            # The path goes to the server log only, never into API responses.
+            log.info("Model %s: %s%s (models directory: %s)", YUNET.name, status,
+                     f" ({detail})" if detail else "", settings.models_dir)
         yield
 
     app = FastAPI(title="AI Surveillance inference", version=__version__, lifespan=lifespan,

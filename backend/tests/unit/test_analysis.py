@@ -109,6 +109,50 @@ def test_upload_validation(signed_in, inference, kwargs, status, code):
     assert not route.called  # rejected before reaching the model
 
 
+def test_large_upload_never_touches_disk(signed_in, inference, monkeypatch):
+    """Starlette spools parts over 1 MB to a temp file by default; uploads must stay in memory."""
+    import tempfile
+
+    import starlette.formparsers as fp
+
+    created, rolled = [], []
+
+    class Recorder(tempfile.SpooledTemporaryFile):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(kwargs.get("max_size", args[0] if args else 0))
+
+        def rollover(self):
+            rolled.append(True)
+            super().rollover()
+
+    monkeypatch.setattr(fp, "SpooledTemporaryFile", Recorder)
+    route = inference.post(f"{INFERENCE}/v1/detect").respond(200, json=NO_FACES)
+    big = b"\xff\xd8\xff" + b"0" * (3 * 1024 * 1024)  # 3 MB, under the 10 MB cap
+    resp = _post(signed_in, big)
+    assert resp.status_code == 200
+    assert created, "the multipart parser was not exercised"
+    assert rolled == [], "upload was written to a temporary file on disk"
+    assert route.calls.last.request.content == big
+
+
+def test_spool_guard_detects_disk_writes(monkeypatch):
+    """Control: with Starlette's default threshold the same recorder does see a rollover."""
+    import tempfile
+
+    rolled = []
+
+    class Recorder(tempfile.SpooledTemporaryFile):
+        def rollover(self):
+            rolled.append(True)
+            super().rollover()
+
+    f = Recorder(max_size=1024 * 1024)
+    f.write(b"0" * (2 * 1024 * 1024))
+    f.close()
+    assert rolled == [True]
+
+
 def test_non_multipart_body_rejected(signed_in, inference):
     route = inference.post(f"{INFERENCE}/v1/detect").respond(200, json=DETECT_OK)
     resp = signed_in.post("/api/analysis/faces", content=JPEG, headers={"Content-Type": "image/jpeg"})

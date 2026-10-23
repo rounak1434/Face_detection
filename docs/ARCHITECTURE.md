@@ -42,7 +42,7 @@
   The exact Frigate interfaces are listed in [FRIGATE-API.md](FRIGATE-API.md).
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
-- **AI analysis:** `POST /api/analysis/faces` takes a multipart upload, checks its size, structure and magic bytes, and forwards the image bytes to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints, crops and quality hints. Nothing is stored. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
+- **AI analysis:** `POST /api/analysis/faces` takes a multipart upload, checks its size, structure and magic bytes, and forwards the image bytes to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints, crops and quality hints. Nothing is stored: uploads are parsed in memory, with no temporary files. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
 - **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`).
   - A database created before migrations existed is checked column by column against `0001_baseline`. Only an exact match is backed up and stamped; anything else stops startup unchanged.
   - Any existing SQLite file is backed up before a schema change.

@@ -57,10 +57,13 @@ def sha256_of(path: Path) -> str:
 
 
 def verify_file(spec: ModelSpec, models_dir: Path) -> tuple[str, str | None]:
-    """Return (status, detail) for the model file on disk."""
+    """Return (status, detail) for the model file on disk.
+
+    The detail is shown to API clients, so it never contains filesystem paths.
+    """
     path = models_dir / spec.file_name
     if not path.is_file():
-        return MISSING, f"{spec.file_name} not found in {models_dir}"
+        return MISSING, f"{spec.file_name} is not installed in the models directory"
     if path.stat().st_size != spec.size_bytes:
         return CHECKSUM_MISMATCH, f"size {path.stat().st_size} != expected {spec.size_bytes}"
     if sha256_of(path) != spec.sha256:

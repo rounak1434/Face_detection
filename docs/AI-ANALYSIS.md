@@ -111,6 +111,9 @@ Internal inference endpoints (Docker network only): `GET /health`, `GET /v1/heal
 
 ## Upload and crop storage
 - **Nothing is stored.** The uploaded image and crops exist only in memory during the request. They are not written to disk, the database or logs (`"stored": false`).
+  - Starlette's form parser normally writes upload parts over 1 MB to a temporary file. The api raises that threshold above the upload cap, so every upload stays in memory.
+  - A unit test records any temporary-file rollover for a 3 MB upload and fails if one happens (`test_large_upload_never_touches_disk`).
+- **No filesystem paths in responses.** Model status messages name the model file only, for example "is not installed in the models directory". The models directory path appears in the inference service's own log, not in API responses.
 - Crops are sent back as JPEG data URLs **inside the authenticated response**, so there are no crop files, URLs or paths that could be fetched later or by anyone else. No retention policy is needed because nothing is retained.
 - Client file names are ignored; they never touch the filesystem.
 - The browser shows the original image from its own local copy (`blob:` URL) and positions the boxes in percentages, so they stay aligned at any display size.

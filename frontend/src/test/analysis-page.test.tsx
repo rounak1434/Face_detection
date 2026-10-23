@@ -171,10 +171,10 @@ describe("AnalysisPage", () => {
 
   it("says so when the model is unavailable, and shows no results", async () => {
     mockFetch((method) => (method === "POST"
-      ? { status: 503, body: { error: "model_unavailable", detail: "face_detection_yunet_2023mar.onnx not found",
+      ? { status: 503, body: { error: "model_unavailable", detail: "face_detection_yunet_2023mar.onnx is not installed in the models directory",
           model_status: "missing" } }
       : { status: 200, body: { inference: { reachable: true, ready: false },
-          models: [{ ...MODEL, status: "missing", detail: "face_detection_yunet_2023mar.onnx not found" }] } }));
+          models: [{ ...MODEL, status: "missing", detail: "face_detection_yunet_2023mar.onnx is not installed in the models directory" }] } }));
     render(<AnalysisPage />);
     expect(await screen.findByText("Not installed")).toBeInTheDocument();
     expect(screen.getByText(/no detector is loaded/)).toBeInTheDocument();

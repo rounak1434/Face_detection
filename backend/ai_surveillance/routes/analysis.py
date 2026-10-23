@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile  # what Starlette's form parser returns
-from starlette.requests import Request as StarletteRequest
+from starlette.formparsers import MultiPartParser
 
 from ..deps import AppState, current_user, get_state
 from ..inference_client import InferenceUnavailable
@@ -40,24 +40,23 @@ async def _read_upload(request: Request, max_bytes: int) -> bytes | JSONResponse
     if declared and declared.isdigit() and int(declared) > max_bytes + MULTIPART_OVERHEAD:
         return error(413, "too_large", f"Image is larger than {max_bytes // (1024 * 1024)} MB")
 
-    # Buffer the raw body with a hard cap, then let Starlette parse it from memory.
+    # Buffer the raw body with a hard cap, then parse it from memory.
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > max_bytes + MULTIPART_OVERHEAD:
             return error(413, "too_large", f"Image is larger than {max_bytes // (1024 * 1024)} MB")
 
-    sent = False
+    async def buffered():
+        yield bytes(body)
 
-    async def replay():
-        nonlocal sent
-        if sent:
-            return {"type": "http.disconnect"}
-        sent = True
-        return {"type": "http.request", "body": bytes(body), "more_body": False}
-
+    parser = MultiPartParser(request.headers, buffered(), max_files=1, max_fields=4)
+    # Starlette spools file parts above 1 MB to a temporary file on disk. The
+    # body is already capped, so a threshold above the cap keeps every upload
+    # in memory: nothing is written to disk.
+    parser.spool_max_size = max_bytes + MULTIPART_OVERHEAD
     try:
-        form = await StarletteRequest(request.scope, replay).form(max_files=1, max_fields=4)
+        form = await parser.parse()
     except Exception:  # malformed multipart
         return error(400, "invalid_image", "The upload could not be read as multipart form data")
     try:

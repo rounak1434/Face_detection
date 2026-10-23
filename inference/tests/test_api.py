@@ -110,16 +110,41 @@ def test_model_missing_reports_unavailable(settings):
     assert models[0]["name"] == "yunet" and models[0]["status"] == "missing"
     assert models[0]["license"] == "MIT"
     assert health["models"] == {"yunet": "missing"} and health["ready"] is False
-    assert str(settings.models_dir) not in resp.text  # no filesystem paths leaked
+    assert_no_path(settings.models_dir, resp, models)
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def assert_no_path(models_dir, *payloads):
+    """No part of the models directory path may reach a client.
+
+    Checks the parsed string values, not the raw JSON text: JSON escapes
+    backslashes, which hid a Windows path from the old raw-text check. The
+    directory's unique name (no separators) is checked as well.
+    """
+    for payload in payloads:
+        data = payload.json() if hasattr(payload, "json") else payload
+        for s in _strings(data):
+            assert str(models_dir) not in s and models_dir.name not in s, s
 
 
 def test_corrupted_model_file_is_not_loaded(settings):
     (settings.models_dir / "face_detection_yunet_2023mar.onnx").write_bytes(b"not a model")
     with TestClient(create_app(settings)) as c:
-        status = c.get("/v1/models").json()[0]["status"]
+        models = c.get("/v1/models").json()
         resp = c.post("/v1/detect", content=fx.encode(fx.solid(), "JPEG"))
-    assert status == "checksum_mismatch"
+    assert models[0]["status"] == "checksum_mismatch"
     assert resp.status_code == 503
+    assert_no_path(settings.models_dir, resp, models)
 
 
 def test_model_that_fails_to_load_is_reported_not_ready(settings, monkeypatch):
@@ -141,6 +166,7 @@ def test_model_that_fails_to_load_is_reported_not_ready(settings, monkeypatch):
     assert health["ready"] is False and model["status"] == "load_error"
     assert resp.status_code == 503 and resp.json()["model_status"] == "load_error"
     assert "/secret/path" not in resp.text and "/secret/path" not in str(model)
+    assert_no_path(settings.models_dir, resp, model)
 
 
 def test_health_ready_with_loaded_detector(settings):
