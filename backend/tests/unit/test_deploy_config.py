@@ -134,6 +134,16 @@ def test_caddy_proxies_to_api_port():
     assert '"--port", "8000"' in dockerfile
 
 
+def test_inference_service_is_internal_and_reachable_by_api(compose):
+    inference = compose["services"]["inference"]
+    assert "ports" not in inference, "the inference service must not be published"
+    assert (ROOT / "inference" / "Dockerfile").is_file()
+    dockerfile = (ROOT / "inference" / "Dockerfile").read_text()
+    port = re.search(r'"--port", "(\d+)"', dockerfile).group(1)
+    assert compose["services"]["api"]["environment"]["INFERENCE_URL"] == f"http://inference:{port}"
+    assert "inference_service.download" in dockerfile, "models must be fetched and verified at build time"
+
+
 def test_nvidia_override_switches_image(compose):
     override = yaml.safe_load((DEPLOY / "compose.nvidia.yaml").read_text())
     image = override["services"]["frigate"]["image"]

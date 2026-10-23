@@ -15,6 +15,7 @@ from ai_surveillance.main import create_app
 from ai_surveillance.security import hash_password
 
 FRIGATE = "http://frigate.test:5000"
+INFERENCE = "http://inference.test:8100"
 ADMIN_USER = "admin"
 ADMIN_PASSWORD = "correct-horse-battery"
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
@@ -41,6 +42,7 @@ def settings(tmp_path) -> Settings:
         database_url=f"sqlite:///{tmp_path / 'app.db'}",
         media_root=tmp_path / "media",
         frigate_url=FRIGATE,
+        inference_url=INFERENCE,
         cookie_secure=False,  # TestClient talks plain HTTP
         clip_settle_seconds=0,
         clip_poll_interval_seconds=0,
@@ -54,6 +56,9 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def frigate():
     with respx.mock(base_url=FRIGATE, assert_all_called=False) as mock:
+        # The inference service is mocked in the same router so health checks
+        # never touch the network; tests override these routes as needed.
+        mock.get(f"{INFERENCE}/v1/health").respond(200, json={"status": "ok", "models": {"yunet": "ready"}})
         mock.get("/api/version").respond(200, text="0.18.2-test")
         mock.get("/api/config").respond(200, json=FRIGATE_CONFIG)
         mock.get("/api/stats").respond(200, json=FRIGATE_STATS)
@@ -66,7 +71,7 @@ def frigate():
 @pytest.fixture
 def client(settings, frigate):
     db = Database(settings.database_url)
-    db.create_all()
+    db.migrate()
     with db.sessionmaker() as session:
         session.add(AdminUser(username=ADMIN_USER, password_hash=hash_password(ADMIN_PASSWORD)))
         session.commit()

@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -87,10 +87,22 @@ class Device(Base):
 
 def make_engine(database_url: str) -> Engine:
     connect_args = {}
-    if database_url.startswith("sqlite:///"):
+    is_sqlite = database_url.startswith("sqlite:///")
+    if is_sqlite:
         Path(database_url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
         connect_args["check_same_thread"] = False
-    return create_engine(database_url, connect_args=connect_args)
+    engine = create_engine(database_url, connect_args=connect_args)
+    if is_sqlite:
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            # WAL lets readers work while one writer commits (api + worker later);
+            # busy_timeout waits for a lock instead of failing immediately.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+    return engine
 
 
 class Database:
@@ -98,10 +110,11 @@ class Database:
         self.engine = make_engine(database_url)
         self.sessionmaker = sessionmaker(self.engine, expire_on_commit=False)
 
-    def create_all(self) -> None:
-        # Milestone 1 schema is created directly; migrations (Alembic) arrive
-        # with the first schema change in milestone 2.
-        Base.metadata.create_all(self.engine)
+    def migrate(self) -> str:
+        """Bring the schema to the latest Alembic revision; returns what was done."""
+        from .migrations import upgrade_to_head
+
+        return upgrade_to_head(self.engine)
 
     def session(self) -> Iterator[Session]:
         with self.sessionmaker() as session:

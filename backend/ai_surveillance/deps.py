@@ -11,6 +11,7 @@ from .config import Settings
 from .credentials import CredentialCipher
 from .db import AdminUser, Database
 from .frigate_client import FrigateClient, FrigateError
+from .inference_client import InferenceClient
 from .media import MediaStore
 from .security import SESSION_COOKIE, LoginThrottle, user_for_token
 
@@ -25,6 +26,8 @@ class AppState:
     store: MediaStore
     throttle: LoginThrottle
     cipher: CredentialCipher
+    inference: InferenceClient
+    analysis_slots: asyncio.Semaphore
     background: set[asyncio.Task] = field(default_factory=set)
     device_tests: dict[str, float] = field(default_factory=dict)  # device id -> last test time
     _cameras: dict[str, dict] | None = None

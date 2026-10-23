@@ -26,6 +26,7 @@ export type Health = {
   app: string;
   version: string;
   frigate: { reachable: boolean; version?: string; error?: string };
+  inference?: { reachable: boolean; models_ready?: boolean; error?: string };
 };
 
 export type DeviceKind = "ip_camera" | "nvr" | "synthetic";
@@ -82,8 +83,46 @@ export type DeviceInput = {
   sub_stream: string | null;
 };
 
+export type Box = { x: number; y: number; w: number; h: number };
+
+export type AnalysedFace = {
+  index: number;
+  box: Box;
+  score: number;
+  keypoints5: [number, number][];
+  crop_box: Box | null;
+  crop_data_url: string | null;
+};
+
+export type FaceAnalysis = {
+  source: "inference";
+  image: { width: number; height: number; format: string };
+  faces: AnalysedFace[];
+  face_count: number;
+  message: string | null;
+  parameters: { min_score: number; max_faces: number; crop_margin: number } | null;
+  model: { name: string; version: string };
+  processing_ms: number | null;
+  stored: boolean;
+};
+
+export type ModelInfo = {
+  name: string;
+  task: string;
+  version: string;
+  status: "ready" | "missing" | "checksum_mismatch" | "load_error" | string;
+  detail: string | null;
+  license: string;
+  license_url: string;
+  source: string;
+  notes: string;
+  runtime: string;
+};
+
+export type ModelsResponse = { inference: { reachable: boolean; detail?: string }; models: ModelInfo[] };
+
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -96,8 +135,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!resp.ok) {
     let detail = resp.statusText;
+    let code: string | undefined;
     try {
       const body = await resp.json();
+      if (typeof body.error === "string") code = body.error;
       if (typeof body.detail === "string") detail = body.detail;
       // FastAPI validation errors: [{loc: [..., "field"], msg: "..."}]
       else if (Array.isArray(body.detail))
@@ -111,7 +152,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // non-JSON error body
     }
-    throw new ApiError(resp.status, detail || `HTTP ${resp.status}`);
+    throw new ApiError(resp.status, detail || `HTTP ${resp.status}`, code);
   }
   return resp.status === 204 ? (undefined as T) : ((await resp.json()) as T);
 }
@@ -140,6 +181,14 @@ export const api = {
   deleteDevice: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   testDevice: (id: string) => request<Device>(`/api/devices/${encodeURIComponent(id)}/test`, { method: "POST" }),
   addSynthetic: () => request<Device>("/api/devices/synthetic", { method: "POST" }),
+  models: () => request<ModelsResponse>("/api/models"),
+  // The file is sent as the raw body with its own image type.
+  analyseFaces: (file: File, minScore?: number) =>
+    request<FaceAnalysis>(`/api/analysis/faces${minScore !== undefined ? `?min_score=${minScore}` : ""}`, {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    }),
   latestFrameUrl: (camera: string) => `${cam(camera)}/latest.jpg?t=${Date.now()}`,
   liveSocketUrl: (camera: string) => {
     const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";

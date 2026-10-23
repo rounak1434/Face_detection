@@ -20,7 +20,7 @@ from .security import MIN_PASSWORD_LENGTH, hash_password, revoke_user_sessions
 
 def create_admin(username: str) -> int:
     db = Database(get_settings().database_url)
-    db.create_all()
+    db.migrate()
     password = getpass.getpass(f"Password for {username} (min {MIN_PASSWORD_LENGTH} chars): ")
     if password != getpass.getpass("Repeat password: "):
         print("Passwords do not match.", file=sys.stderr)

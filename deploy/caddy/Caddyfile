@@ -14,6 +14,10 @@
 	}
 
 	handle /api/* {
+		# Uploads (face analysis) are capped in the api at 10 MB; this is an outer bound.
+		request_body {
+			max_size 12MB
+		}
 		reverse_proxy api:8000
 	}
 

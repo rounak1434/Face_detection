@@ -24,7 +24,7 @@ fi
 
 echo "Containers"
 docker compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null || fail "docker compose ps failed (run from deploy/)"
-for svc in frigate api web; do
+for svc in frigate api inference web; do
   state=$(docker compose ps --format '{{.State}}' "$svc" 2>/dev/null)
   [ "$state" = "running" ] && pass "$svc running" || fail "$svc is '${state:-not created}': docker compose logs --tail 80 $svc"
 done
@@ -40,6 +40,14 @@ if docker compose exec -T api python -c "import urllib.request,json; s=json.load
   info "camera_fps 0 means Frigate receives no frames: check the test-stream container or the RTSP URL (SETUP.md section 9)"
 fi
 
+echo "AI inference service as seen from the api container"
+if out=$(docker compose exec -T api python -c "import urllib.request,json; h=json.load(urllib.request.urlopen('http://inference:8100/v1/health', timeout=5)); print(h['models'])" 2>/dev/null); then
+  pass "api can reach inference:8100, models: $out"
+  case "$out" in *"'ready'"*) ;; *) fail "a model is not ready: docker compose logs --tail 80 inference";; esac
+else
+  fail "api cannot reach inference:8100: docker compose logs --tail 80 inference"
+fi
+
 echo "Web entry point"
 site=$(grep -E '^SITE_ADDRESS=' .env 2>/dev/null | cut -d= -f2-)
 site=${site:-localhost}
@@ -47,7 +55,7 @@ code=$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$site:443:127.0.0.1" "
 [ "$code" = "200" ] && pass "https://$site/api/health answers 200" || fail "https://$site/api/health answered '${code}': docker compose logs --tail 80 web api"
 
 echo "Recent errors (last 200 lines per service)"
-for svc in frigate api web test-stream; do
+for svc in frigate api inference web test-stream; do
   n=$(docker compose logs --tail 200 "$svc" 2>/dev/null | grep -ciE 'error|fatal|exception' || true)
   [ "${n:-0}" -gt 0 ] && info "$svc: $n error lines -> docker compose logs --tail 200 $svc"
 done

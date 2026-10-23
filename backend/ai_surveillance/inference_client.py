@@ -1,0 +1,47 @@
+"""Client for the internal inference service (inference/ in the repository)."""
+
+import httpx
+
+from .config import Settings
+
+
+class InferenceUnavailable(Exception):
+    """The inference service could not be reached or did not answer in time."""
+
+
+class InferenceClient:
+    def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=settings.inference_url.rstrip("/"),
+            timeout=settings.inference_timeout_seconds,
+            transport=transport,
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _send(self, method: str, path: str, **kwargs) -> httpx.Response:
+        try:
+            return await self._client.request(method, path, **kwargs)
+        except httpx.TimeoutException as exc:
+            raise InferenceUnavailable("The inference service did not answer in time") from exc
+        except httpx.HTTPError as exc:
+            raise InferenceUnavailable(f"The inference service is unreachable ({type(exc).__name__})") from exc
+
+    async def health(self) -> dict:
+        resp = await self._send("GET", "/v1/health")
+        if resp.status_code != 200:
+            raise InferenceUnavailable(f"Inference health check returned HTTP {resp.status_code}")
+        return resp.json()
+
+    async def models(self) -> list[dict]:
+        resp = await self._send("GET", "/v1/models")
+        if resp.status_code != 200:
+            raise InferenceUnavailable(f"Inference model list returned HTTP {resp.status_code}")
+        return resp.json()
+
+    async def detect(self, image: bytes, min_score: float | None, max_faces: int | None) -> httpx.Response:
+        """Raw response: the caller maps the service's error codes."""
+        params = {k: v for k, v in {"min_score": min_score, "max_faces": max_faces}.items() if v is not None}
+        return await self._send("POST", "/v1/detect", content=image, params=params,
+                                headers={"Content-Type": "application/octet-stream"})

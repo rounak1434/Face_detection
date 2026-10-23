@@ -52,6 +52,8 @@ services:
       CREDENTIALS_KEY_FILE: /data/credentials.key
       DEVICE_ALLOWED_NETWORKS: ${DEVICE_ALLOWED_NETWORKS:-192.168.0.0/16,10.0.0.0/8}
       SYNTHETIC_RTSP_URL: rtsp://test-stream:8554/test
+      INFERENCE_URL: http://inference:8100
+      ANALYSIS_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
       TZ: ${TZ:-UTC}
     # A named volume, so the non-root api user owns it (a bind mount would
     # be created root-owned and the service could not write its database).
@@ -62,7 +64,17 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    depends_on: [frigate]
+    depends_on: [frigate, inference]
+    networks: [internal]
+
+  # Face analysis models (YuNet so far). Models are downloaded and verified
+  # when the image is built; at run time it needs no internet and keeps no
+  # images. Internal network only: no published ports.
+  inference:
+    build: ../inference
+    restart: unless-stopped
+    environment:
+      INFERENCE_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
     networks: [internal]
 
   web:

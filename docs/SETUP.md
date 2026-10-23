@@ -25,7 +25,7 @@ git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.
 cd ~/ai-surveillance/deploy
 cp .env.example .env && chmod 600 .env
 docker compose up -d --build                          # first run downloads images: several minutes
-docker compose ps                                     # frigate, api, web, test-stream → running
+docker compose ps                                     # frigate, api, inference, web, test-stream → running
 docker compose exec api ai-surveillance create-admin admin
 bash doctor.sh
 ```
@@ -88,14 +88,14 @@ Never commit `deploy/.env`. It is gitignored.
 | Action | Command (run in `~/ai-surveillance/deploy`) |
 |---|---|
 | Start (and build) | `docker compose up -d --build` |
-| Status | `docker compose ps` |
-| Logs | `docker compose logs -f frigate` (or `api`, `web`, `test-stream`) |
+| Status | `docker compose ps` (frigate, api, inference, web, test-stream) |
+| Logs | `docker compose logs -f frigate` (or `api`, `inference`, `web`, `test-stream`) |
 | Stop, keeping all data | `docker compose down` |
 | Restart one service | `docker compose restart api` |
 | Update after `git pull` | `docker compose up -d --build` |
 | Delete **all** data | `docker compose down -v && sudo rm -rf storage`. This deletes recordings, captures, accounts and the credentials key. |
 
-The first start downloads the Frigate, mediamtx, Python, Node and Caddy images, then builds the api and web images. Frigate needs another minute or two to come up. To watch it:
+The first start downloads the Frigate, mediamtx, Python, Node and Caddy images. It then builds the api, inference and web images. Building the inference image also downloads the YuNet face model (about 230 KB) from OpenCV Zoo and verifies its SHA-256. A mismatch stops the build. Frigate needs another minute or two to come up. To watch it:
 ```bash
 docker compose logs -f frigate
 ```
@@ -133,6 +133,10 @@ docker compose exec api ai-surveillance create-admin admin
 2. **Snapshot** saves a JPEG into Captures.
 3. **Save 10 s clip**: wait at least one minute after start so recordings exist. The clip appears as "pending", then "ready".
 4. **Camera & NVR Setup tab:** click **Add synthetic test source**, then **Test connection**. It should show **Connected (h264 1280×720)**.
+5. **AI analysis tab:**
+   - Models shows **yunet: Ready**.
+   - Choose a photo you are allowed to use, then click **Detect faces**. You should see boxes, 5 keypoints per face and face crops, labelled "Real model inference".
+   - Nothing you upload is stored. See [AI-ANALYSIS.md](AI-ANALYSIS.md).
 
 **Back up the credentials key.** It encrypts the passwords stored for real devices:
 ```bash
@@ -153,6 +157,7 @@ bash doctor.sh
 **Integration tests.** These run against the real stack, with no mocks. They need the stack running for at least a minute and the admin you created:
 ```bash
 bash run-integration-tests.sh          # prompts for the web admin password
+IT_FACE_IMAGE=~/photo.jpg bash run-integration-tests.sh   # also checks real face detection
 ```
 - The script runs `backend/tests/integration` in a throwaway `python:3.12-slim` container.
 - It checks:
@@ -163,6 +168,8 @@ bash run-integration-tests.sh          # prompts for the web admin password
   - live websocket video
   - synthetic source **Connected**
   - 10 s clip downloadable as MP4
+  - face model ready, no-face image handled, and non-images rejected
+  - a real face, when `IT_FACE_IMAGE` points to a photo with one visible face that you are allowed to use
 - Please send the full output. It is what turns the "Unverified" lines in VERIFICATION.md into "Verified".
 
 **Unit tests** (mocked engine) need no stack:

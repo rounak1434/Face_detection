@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # The synthetic RTSP source is defined by the server, never by the browser.
     synthetic_rtsp_url: str = "rtsp://test-stream:8554/test"
 
+    # Internal face-analysis service (inference container); never exposed.
+    inference_url: str = "http://inference:8100"
+    inference_timeout_seconds: float = 30.0
+    analysis_max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    # Simultaneous analyses; more requests wait their turn (CPU protection).
+    analysis_concurrency: int = Field(default=2, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -20,6 +20,25 @@ cd ~/ai-surveillance/deploy && bash doctor.sh
 | `test-stream` restarting, or mediamtx config errors | Check `docker compose logs test-stream` and report the message. The config is `deploy/test-stream/mediamtx.yml`. |
 | Nothing from `test-stream` in `docker compose ps` | `COMPOSE_PROFILES=test-stream` is missing from `.env`. Add it back, or use `docker compose --profile test-stream up -d`. |
 
+## "AI unreachable", or the AI analysis page says the model is unavailable
+1. **Is the service running?**
+   ```bash
+   docker compose ps inference
+   ```
+   Then read `docker compose logs --tail 80 inference`. The startup line `Model yunet: ready` means the model loaded.
+2. **`Model yunet: missing` or `checksum_mismatch`.** The image was built without a verified model. Rebuild it:
+   ```bash
+   docker compose build --no-cache inference && docker compose up -d
+   ```
+   The build must reach github.com / media.githubusercontent.com, and it fails if the downloaded file doesn't match the pinned SHA-256.
+3. **Build error mentioning `download.py` / "does not match the pinned checksum".** The file fetched from OpenCV Zoo differs from the pinned one. Do not bypass the check; report the message.
+4. **Can the api reach it?**
+   ```bash
+   docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://inference:8100/v1/health').read())"
+   ```
+5. **`413 too_large`** for a normal photo: the limit is 10 MB and 40 megapixels. Raise `ANALYSIS_MAX_IMAGE_BYTES` in `.env` if needed; Caddy also caps bodies at 12 MB.
+6. **`415 unsupported_format`**: only JPEG, PNG and WebP are accepted. HEIC photos from iPhones must be converted first.
+
 ## The header says "Engine unreachable"
 The api could not get `/api/version` from Frigate. Check these in order:
 1. **Is Frigate running?**

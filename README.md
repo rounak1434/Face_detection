@@ -15,6 +15,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 - A captures gallery with an image viewer and video player.
 - An RTSP probe tool (`ai-surveillance probe`) that reports the codec, resolution and frame rate it actually decoded. Credentials are masked in its output.
 - A synthetic RTSP test stream, for testing without camera hardware.
+- An **AI analysis** page that detects faces in an uploaded image with a real model (YuNet, MIT licence). It shows boxes, 5 keypoints and face crops, and stores nothing. See [docs/AI-ANALYSIS.md](docs/AI-ANALYSIS.md).
 - A **Camera & NVR Setup** page. It has three separate kinds of source:
   - **Browser webcam:** local preview only.
   - **Synthetic RTSP test source.**
@@ -26,6 +27,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 | Path | What |
 |---|---|
 | `backend/` | API service (Python 3.12, FastAPI). Package `ai_surveillance`. |
+| `inference/` | Internal face-analysis service (FastAPI, OpenCV). Package `inference_service`. |
 | `frontend/` | Web UI (React + TypeScript + Vite). |
 | `deploy/` | Docker Compose stack: Frigate, api, web (Caddy HTTPS) and an optional test stream. Also holds the systemd unit. |
 | `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), and the Frigate API contract (`FRIGATE-API.md`). |

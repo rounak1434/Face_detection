@@ -16,6 +16,7 @@ dependencies = [
   "sqlalchemy>=2.0,<3",
   "argon2-cffi>=23.1",
   "cryptography>=42",
+  "alembic>=1.13,<2",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,11 @@ ai-surveillance = "ai_surveillance.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ai_surveillance*"]
+
+# Migration scripts are loaded from files by Alembic, not imported as a
+# package, so they must be shipped explicitly.
+[tool.setuptools.package-data]
+ai_surveillance = ["migrations/script.py.mako", "migrations/versions/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

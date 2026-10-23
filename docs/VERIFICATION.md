@@ -11,6 +11,27 @@ Results are never upgraded without a recorded test.
 ## Known limitation of the development PC
 This Windows PC has no Docker and no FFmpeg, and WSL is broken. **Frigate, the test stream, the Docker images and the compose stack have never run here.** Everything below that needs them is unverified until the steps in [SETUP.md](SETUP.md) §1–5 are run on Ubuntu.
 
+## Phase 1: AI foundations, 2026-10-23 (Windows dev PC, Python 3.12.10, OpenCV 4.14.0)
+| Item | Status | Evidence |
+|---|---|---|
+| YuNet model download matches the pinned SHA-256 and size | Verified | `python -m inference_service.download`: "downloaded and verified (232589 bytes)" |
+| Real YuNet on a real face | Verified (dev PC) | Public-domain NASA portrait (Wikimedia Commons, NASA photo S69-31741), used locally only and **not committed**: 1 face, score 0.939, 5 keypoints inside the box. Grey image: 0 faces. |
+| Real YuNet: no faces in synthetic images; degenerate sizes | Verified (dev PC) | `inference/tests/test_model_yunet.py` |
+| YuNet garbage detections on short inputs: found and fixed | Verified (dev PC) | Before: 16/300 spurious faces on 20×2000. After padding and keypoint check: 0/300 for every degenerate size tested. |
+| Image decoding: formats, EXIF, alpha, corrupt files, byte and pixel limits | Verified | `inference/tests/test_imaging.py` |
+| Inference HTTP contract and error codes | Verified (fake detector) | `inference/tests/test_api.py` |
+| Inference test suite total | Verified | **30 passed** with `FACE_FIXTURE` set; 29 passed + 1 skipped without it; 24 passed + 6 skipped with no model present |
+| Backend unit tests total | Verified (mocked engine/inference) | **160 passed**; 11 integration tests skipped without a stack |
+| Frontend tests and build | Verified | vitest **23 passed**; `tsc -b && vite build` succeeds |
+| API `/api/analysis/faces` and `/api/models` contract and error mapping | Mock-only inference | `backend/tests/unit/test_analysis.py` |
+| API → real inference service, end to end (no Docker) | Verified (dev PC) | Both run as local processes. Face photo gave 1 face (box 513,231,153×199; crop returned; `stored:false`). Blank PNG: "No face detected". GIF: 415. Truncated JPEG: 400. Anonymous request: 401. |
+| Analysis page in a real browser with real inference | Verified (dev PC) | 1 green box at the correct position, 5 keypoints, crop rendered, "Real model inference yunet 2023mar · 1 face · 480×600 · 53.5 ms". Header showed "AI ready". |
+| Alembic baseline: fresh DB, legacy `create_all` DB stamped not altered, models match migrations, downgrade/upgrade, WAL on | Verified | `backend/tests/unit/test_migrations.py`, plus the existing smoke DB: "stamped as 0001_baseline" at startup |
+| Migration scripts shipped in the built package | Verified | `pip wheel` contents include `migrations/versions/0001_baseline.py` and `script.py.mako` |
+| Inference Docker image builds (opencv-headless on `python:3.12-slim`); model download inside the build | Unverified (host) | No Docker here |
+| Inference in the compose stack; `doctor.sh` inference checks; integration tests for analysis | Unverified (host) | `bash run-integration-tests.sh`, optionally with `IT_FACE_IMAGE` |
+| Detection accuracy on CP Plus footage; speed on Ubuntu | Not measured | Evaluation protocol in the roadmap |
+
 ### WSL2 check on the development PC (read-only, 2026-10-22)
 | Check | Result |
 |---|---|

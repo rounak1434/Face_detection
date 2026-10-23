@@ -18,6 +18,9 @@
  │  api       FastAPI: sign-in, camera list, live relay, snapshot/clip capture,       │
  │            capture index (SQLite) and media store                                  │
  │     ▲                                                                              │
+ │  inference face models (YuNet detection so far) behind adapters; internal only;    │
+ │            models verified at build time; keeps no images                          │
+ │     ▲                                                                              │
  │  web       Caddy: HTTPS (local CA), security headers, serves the React UI,         │
  │            proxies /api → api. The only service published on the LAN.            │
  │                                                                                    │
@@ -39,6 +42,8 @@
   The exact Frigate interfaces are listed in [FRIGATE-API.md](FRIGATE-API.md).
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
+- **AI analysis:** `POST /api/analysis/faces` streams the uploaded image, with checks on size, type and magic bytes, to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints and crops. Nothing is stored. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
+- **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`). A database created before migrations existed is stamped as baseline `0001_baseline`, not altered.
 - **Camera & NVR setup:** `/api/devices` (CRUD) and `POST /api/devices/<id>/test`. The api checks the address, opens a TCP connection, then runs ffprobe against the device. The browser webcam preview runs entirely in the browser and never reaches the api.
 
 ## Security model

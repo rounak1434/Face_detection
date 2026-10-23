@@ -16,11 +16,14 @@ deploy/frigate/*
 *.onnx
 *.engine
 
+inference/models/
+
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+build/
 .pytest_cache/
 .coverage
 htmlcov/

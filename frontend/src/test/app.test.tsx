@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { App } from "../App";
 import { Captures } from "../components/Captures";
+
+const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 import { supportedCodecs } from "../mse";
 
 type Route = { status: number; body?: unknown };
@@ -43,7 +46,7 @@ describe("supportedCodecs", () => {
 describe("App", () => {
   it("shows the login form when not signed in", async () => {
     mockFetch({ "GET /api/health": { status: 200, body: health }, "GET /api/auth/me": { status: 401 } });
-    render(<App />);
+    renderApp();
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AI Surveillance" })).toBeInTheDocument();
   });
@@ -62,7 +65,7 @@ describe("App", () => {
         body: { id: "1", camera: "entrance", kind: "snapshot", status: "ready" },
       },
     });
-    render(<App />);
+    renderApp();
     expect(await screen.findByRole("heading", { name: "entrance" })).toBeInTheDocument();
     expect(screen.getByAltText("Latest frame from entrance")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Snapshot" }));
