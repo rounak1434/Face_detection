@@ -106,6 +106,32 @@ describe("AnalysisPage", () => {
     expect(post.headers["Content-Type"]).toBeUndefined(); // browser sets the multipart boundary
   });
 
+  it("keeps keypoints of a face cut by the image edge inside the image", async () => {
+    // A face at the left border: the model's raw keypoints fall outside the image (x < 0).
+    const edgeFace = FACE(0, 0, {
+      box: { x: 0, y: 50, w: 54, h: 100 },
+      keypoints5: [[-12.5, 80], [30, 78], [10, 100], [-4, 120], [28, 118]],
+      quality: { face_px: 54, small_face: false, touches_edge: true, sharpness: 90 },
+    });
+    mockFetch(modelsOr({ status: 200, body: { ...RESULT, faces: [edgeFace], face_count: 1 } }));
+    render(<AnalysisPage />);
+    pick(jpeg());
+    fireEvent.click(await screen.findByRole("button", { name: "Detect faces" }));
+    expect(await screen.findByLabelText("Face 1")).toHaveStyle({ left: "0%", width: "13.5%" });
+    const points = [...screen.getByTestId("analysis-image").querySelectorAll<HTMLElement>(".keypoint")];
+    expect(points).toHaveLength(5);
+    for (const p of points) {
+      const left = parseFloat(p.style.left);
+      const top = parseFloat(p.style.top);
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(left).toBeLessThanOrEqual(100);
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top).toBeLessThanOrEqual(100);
+    }
+    expect(points.filter((p) => p.classList.contains("keypoint-clipped"))).toHaveLength(2);
+    expect(screen.getByText("at image edge")).toBeInTheDocument();
+  });
+
   it("shows a loading state while analysing", async () => {
     let finish!: (v: { status: number; body: unknown }) => void;
     mockFetch(modelsOr(new Promise((resolve) => { finish = resolve; })));

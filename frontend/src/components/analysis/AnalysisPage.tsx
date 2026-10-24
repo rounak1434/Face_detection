@@ -13,6 +13,10 @@ type State =
   | { kind: "error"; message: string; code?: string };
 
 const pct = (value: number, total: number) => `${(value / total) * 100}%`;
+// Keypoints are the model's raw output and can lie outside the image for a
+// face cut off by the border. They are clamped for drawing only.
+const clampPct = (value: number, total: number) => pct(Math.min(Math.max(value, 0), total), total);
+const outside = (x: number, y: number, w: number, h: number) => x < 0 || y < 0 || x > w || y > h;
 
 // Face detection and cropping on an uploaded image, using the real model in
 // the inference service. Nothing here is simulated: without the model the
@@ -125,8 +129,9 @@ export function AnalysisPage() {
               ))}
               {result?.faces.flatMap((f) =>
                 f.keypoints5.map(([x, y], i) => (
-                  <span key={`${f.index}-${i}`} className="keypoint" aria-hidden="true"
-                    style={{ left: pct(x, result.image.width), top: pct(y, result.image.height) }} />
+                  <span key={`${f.index}-${i}`} aria-hidden="true"
+                    className={outside(x, y, result.image.width, result.image.height) ? "keypoint keypoint-clipped" : "keypoint"}
+                    style={{ left: clampPct(x, result.image.width), top: clampPct(y, result.image.height) }} />
                 )),
               )}
             </div>

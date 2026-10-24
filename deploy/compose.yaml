@@ -75,6 +75,10 @@ services:
     restart: unless-stopped
     environment:
       INFERENCE_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
+    # Upper bound if decoding or a model misbehaves. Sized for 2 concurrent
+    # 40-megapixel images (~120 MB RGB each, plus copies and OpenCV buffers).
+    # Raise INFERENCE_MEM_LIMIT in .env if larger models are added later.
+    mem_limit: ${INFERENCE_MEM_LIMIT:-1536m}
     networks: [internal]
 
   web:

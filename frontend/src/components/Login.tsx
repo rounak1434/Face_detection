@@ -1,7 +1,9 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api";
 
-export function Login({ appName, onSignedIn }: { appName: string; onSignedIn: (user: string) => void }) {
+type Props = { appName: string; onSignedIn: (user: string) => void; notice?: string | null };
+
+export function Login({ appName, onSignedIn, notice }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export function Login({ appName, onSignedIn }: { appName: string; onSignedIn: (u
     <main className="login">
       <form className="card" onSubmit={submit}>
         <h1>{appName}</h1>
+        {notice && <p className="notice" role="status">{notice}</p>}
         <label>
           Username
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />

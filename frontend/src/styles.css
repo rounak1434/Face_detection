@@ -144,13 +144,15 @@ a.tab { text-decoration: none; border-radius: 8px; font-size: 0.95rem; }
 .file-button { position: relative; overflow: hidden; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .analysis-stage { margin-top: 0.75rem; }
-.analysis-image { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+/* overflow: hidden keeps every overlay inside the image, even when a box or keypoint touches the border. */
+.analysis-image { position: relative; display: inline-block; max-width: 100%; line-height: 0; overflow: hidden; }
 .analysis-image img { max-width: 100%; max-height: 70vh; display: block; border-radius: 8px; }
 .face-box { position: absolute; border: 2px solid #22c55e; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
 .face-label { position: absolute; top: -1.4em; left: -2px; background: #22c55e; color: #000; font-size: 0.75rem;
   line-height: 1.4; padding: 0 6px; border-radius: 4px 4px 0 0; }
 .keypoint { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%;
   background: #f59e0b; box-shadow: 0 0 0 1px #000; }
+.keypoint-clipped { opacity: 0.45; }
 .analysis-results { margin-top: 0.75rem; }
 .crops { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }

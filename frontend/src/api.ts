@@ -138,6 +138,18 @@ export class ApiError extends Error {
   }
 }
 
+// Central handling of expired or invalid sessions. Any 401 from a protected
+// endpoint calls the registered handler (the app returns to the login
+// screen). Only 401 does this: 403, 5xx and network errors leave the
+// session alone. The auth endpoints are exempt: a wrong password at login,
+// the "not signed in yet" check and logout are not session expiry.
+const AUTH_EXEMPT = new Set(["/api/auth/login", "/api/auth/me", "/api/auth/logout"]);
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   // FormData sets its own multipart Content-Type (with boundary); JSON otherwise.
   const defaults: Record<string, string> = init.body instanceof FormData ? {} : { "Content-Type": "application/json" };
@@ -165,6 +177,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // non-JSON error body
     }
+    if (resp.status === 401 && !AUTH_EXEMPT.has(path.split("?")[0])) onUnauthorized?.();
     throw new ApiError(resp.status, detail || `HTTP ${resp.status}`, code);
   }
   return resp.status === 204 ? (undefined as T) : ((await resp.json()) as T);

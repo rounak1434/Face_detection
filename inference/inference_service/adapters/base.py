@@ -24,6 +24,8 @@ class DetectedFace:
     score: float
     # Five points in image coordinates, in OpenCV's FaceDetectorYN order:
     # right eye, left eye, nose tip, right mouth corner, left mouth corner.
+    # Raw model output: for a face cut off by the border a point may lie
+    # slightly outside the image. Boxes are clipped; keypoints are not.
     keypoints5: list[tuple[float, float]] = field(default_factory=list)
 
 

@@ -144,6 +144,21 @@ def test_inference_service_is_internal_and_reachable_by_api(compose):
     assert "inference_service.download" in dockerfile, "models must be fetched and verified at build time"
 
 
+def test_inference_has_a_memory_limit(compose):
+    assert compose["services"]["inference"]["mem_limit"].startswith("${INFERENCE_MEM_LIMIT:-")
+
+
+@pytest.mark.parametrize("service", ["backend", "inference"])
+def test_images_install_with_pinned_constraints(service):
+    dockerfile = (ROOT / service / "Dockerfile").read_text()
+    assert "-c constraints.txt" in dockerfile and "constraints.txt" in dockerfile.split("COPY", 2)[1]
+    pins = [l for l in (ROOT / service / "constraints.txt").read_text().splitlines() if l and not l.startswith("#")]
+    assert pins and all("==" in p for p in pins), "constraints must be exact pins"
+    assert not any(p.lower().startswith("ai-surveillance") for p in pins), "the package itself must not be pinned"
+    ignored = (ROOT / service / ".dockerignore").read_text().split()
+    assert "constraints.txt" not in ignored
+
+
 def test_nvidia_override_switches_image(compose):
     override = yaml.safe_load((DEPLOY / "compose.nvidia.yaml").read_text())
     image = override["services"]["frigate"]["image"]

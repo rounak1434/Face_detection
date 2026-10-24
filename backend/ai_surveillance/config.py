@@ -61,8 +61,14 @@ class Settings(BaseSettings):
     inference_url: str = "http://inference:8100"
     inference_timeout_seconds: float = 30.0
     analysis_max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
-    # Simultaneous analyses; more requests wait their turn (CPU protection).
+    # Simultaneous analyses, counted from the start of the upload (memory and
+    # CPU protection); more requests wait up to analysis_queue_timeout_seconds
+    # for a slot, then get 503 analysis_busy.
     analysis_concurrency: int = Field(default=2, ge=1)
+    analysis_queue_timeout_seconds: float = Field(default=15.0, gt=0)
+    # A client must deliver the whole upload within this time (408 otherwise),
+    # so a slow sender cannot hold a slot indefinitely.
+    analysis_upload_timeout_seconds: float = Field(default=30.0, gt=0)
 
 
 @lru_cache

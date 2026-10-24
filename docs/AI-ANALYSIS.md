@@ -84,6 +84,7 @@ curl -k -b cookies.txt -F "file=@photo.jpg" https://localhost/api/analysis/faces
 }
 ```
 - `index` is stable within one response, with faces ordered by score.
+- `box` and `crop.box` are always clipped to the image. `keypoints5` are the model's **raw** coordinates and are not clipped: for a face cut off by the border, a point can lie slightly outside the image (measured: x = −3.7 for the fixture with a third of the face cut away). The Analysis page clamps points to the image for drawing only, dims those that were outside, and clips the overlay to the image.
 - Keypoint order follows OpenCV's `FaceDetectorYN`: right eye, left eye, nose tip, right mouth corner, left mouth corner.
 - `crop` is `null` if a crop could not be produced (for example an empty box).
 - `quality.sharpness` is the variance of the Laplacian at a fixed scale: a heuristic, not a quality model.
@@ -102,6 +103,22 @@ curl -k -b cookies.txt -F "file=@photo.jpg" https://localhost/api/analysis/faces
 | 502 | `inference_failed` | Unexpected response from the inference service |
 | 503 | `model_unavailable` | Model missing, failed verification or failed to load (`model_status` says which) |
 | 503 | `inference_unavailable` | Inference service unreachable, or no answer within 30 s |
+| 503 | `analysis_busy` | All analysis slots were busy for 15 s (`Retry-After: 5`) |
+| 408 | `upload_timeout` | The client did not finish sending the upload within 30 s |
+
+## Resource limits and backpressure
+Order of work in `POST /api/analysis/faces`:
+1. **Header checks first**, with no slot taken and nothing read: multipart content type, and a declared `Content-Length` over the cap is rejected with 413 at once.
+2. **Take a slot.** At most `ANALYSIS_CONCURRENCY` (default 2) analyses run at once, counted from the start of the upload. A request waits up to `ANALYSIS_QUEUE_TIMEOUT_SECONDS` (15) for a slot, then gets `503 analysis_busy`.
+3. **Read the body**, capped at 10 MB plus 64 KB of multipart overhead **while reading**, so a chunked or lying body is cut off. It must arrive within `ANALYSIS_UPLOAD_TIMEOUT_SECONDS` (30), otherwise `408 upload_timeout`. Parsing happens in memory, with no temporary files.
+4. **Inference**, with a 30 s timeout.
+5. **The slot is released in a `finally` block**: on success, every error, timeouts and request cancellation. Tests cover each of these.
+
+**Memory bound in the api:** about concurrency × 4 × the upload cap (raw body, parsed part, forwarded copy), roughly 80 MB at the defaults.
+
+**Inference container:** capped by `mem_limit` (`INFERENCE_MEM_LIMIT`, default 1536m). That is sized for two concurrent 40-megapixel decodes.
+
+**Known limit:** when a browser disconnects mid-request, uvicorn/Starlette do not cancel the handler for this kind of endpoint. The slot is then held until inference answers or its 30 s timeout expires. It is not held forever.
 
 **Related endpoints:**
 - `GET /api/models` returns `{"inference": {"reachable", "ready"}, "models": [{name, task, version, status, detail, license, license_url, source, sha256, notes, runtime}]}`.

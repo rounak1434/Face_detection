@@ -5,6 +5,7 @@ memory. Neither the image nor the face crops are stored on the server; the
 crops are returned inside this authenticated response only.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -24,23 +25,32 @@ MULTIPART_OVERHEAD = 64 * 1024  # boundaries and part headers on top of the file
 FILE_FIELD = "file"
 
 
-def error(status: int, code: str, detail: str, **extra) -> JSONResponse:
-    return JSONResponse({"error": code, "detail": detail, **extra}, status_code=status)
+def error(status: int, code: str, detail: str, headers: dict | None = None, **extra) -> JSONResponse:
+    return JSONResponse({"error": code, "detail": detail, **extra}, status_code=status, headers=headers)
 
 
 def _sniff(head: bytes) -> bool:
     return head[:3] == b"\xff\xd8\xff" or head[:8] == b"\x89PNG\r\n\x1a\n" or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")
 
 
-async def _read_upload(request: Request, max_bytes: int) -> bytes | JSONResponse:
-    """The bytes of the single `file` part, with the size limit enforced while reading."""
+def _check_headers(request: Request, max_bytes: int) -> JSONResponse | None:
+    """Cheap checks done before a concurrency slot is taken or any body is read."""
     if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
         return error(415, "unsupported_format", f"Send the image as multipart/form-data in a field named '{FILE_FIELD}'")
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > max_bytes + MULTIPART_OVERHEAD:
         return error(413, "too_large", f"Image is larger than {max_bytes // (1024 * 1024)} MB")
+    return None
 
-    # Buffer the raw body with a hard cap, then parse it from memory.
+
+async def _read_upload(request: Request, max_bytes: int) -> bytes | JSONResponse:
+    """The bytes of the single `file` part, with the size limit enforced while reading.
+
+    Memory per request is bounded: the raw body is capped at max_bytes plus
+    multipart overhead, and the parsed file part stays in memory (no temp file).
+    """
+    # Buffer the raw body with a hard cap, then parse it from memory. The
+    # cap applies while reading, so an unbounded (e.g. chunked) body is cut off.
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
@@ -84,15 +94,33 @@ async def analyse_faces(
     state: AppState = Depends(get_state),
 ):
     """Detect faces in an uploaded image (multipart field `file`: JPEG, PNG or WebP)."""
-    data = await _read_upload(request, state.settings.analysis_max_image_bytes)
-    if isinstance(data, JSONResponse):
-        return data
+    settings = state.settings
+    rejected = _check_headers(request, settings.analysis_max_image_bytes)
+    if rejected is not None:
+        return rejected
 
-    async with state.analysis_slots:
+    # Backpressure: a slot is needed before the body is read, so at most
+    # `analysis_concurrency` uploads are buffered and analysed at once.
+    try:
+        await asyncio.wait_for(state.analysis_slots.acquire(), settings.analysis_queue_timeout_seconds)
+    except TimeoutError:
+        return error(503, "analysis_busy", "The analysis service is busy; try again shortly",
+                     headers={"Retry-After": "5"})
+    try:
+        try:
+            data = await asyncio.wait_for(_read_upload(request, settings.analysis_max_image_bytes),
+                                          settings.analysis_upload_timeout_seconds)
+        except TimeoutError:
+            return error(408, "upload_timeout", "The upload took too long")
+        if isinstance(data, JSONResponse):
+            return data
         try:
             resp = await state.inference.detect(data, min_score, max_faces)
         except InferenceUnavailable as exc:
             return error(503, "inference_unavailable", str(exc))
+    finally:
+        # Runs on success, errors, timeouts and client cancellation alike.
+        state.analysis_slots.release()
 
     try:
         result = resp.json()

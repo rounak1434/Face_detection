@@ -162,8 +162,19 @@ def test_face_cut_by_image_edge_is_flagged(service, portrait):
     cut = portrait[:, face["x"] + face["w"] // 3:]  # left third of the face removed
     body = service.post("/v1/detect", content=fx.encode(cut[:, :, ::-1], "PNG")).json()
     assert body["face_count"] == 1
-    assert body["faces"][0]["box"]["x"] == 0
-    assert body["faces"][0]["quality"]["touches_edge"] is True
+    result = body["faces"][0]
+    width, height = body["image"]["width"], body["image"]["height"]
+    assert result["box"]["x"] == 0
+    assert result["quality"]["touches_edge"] is True
+    # Box and crop are clipped to the image...
+    for b in (result["box"], result["crop"]["box"]):
+        assert 0 <= b["x"] and b["x"] + b["w"] <= width and 0 <= b["y"] and b["y"] + b["h"] <= height
+    # ...but keypoints are the model's raw output: for this face YuNet puts
+    # the cut-off eye outside the image (measured x of about -3.7). The API
+    # keeps them unmodified; the UI clamps them for drawing only.
+    xs = [p[0] for p in result["keypoints5"]]
+    assert min(xs) < 0, xs
+    assert all(-result["box"]["w"] <= x <= width for x in xs)
 
 
 def test_no_face_through_service(service):

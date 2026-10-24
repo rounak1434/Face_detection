@@ -6,9 +6,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml constraints.txt ./
 COPY ai_surveillance ./ai_surveillance
-RUN pip install --no-cache-dir .
+# constraints.txt pins the exact versions the tests passed with.
+RUN pip install --no-cache-dir -c constraints.txt .
 
 RUN useradd --system --uid 10001 --home /data app && mkdir -p /data && chown app /data
 USER app

@@ -1,9 +1,10 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml constraints.txt ./
 COPY inference_service ./inference_service
-RUN pip install --no-cache-dir .
+# constraints.txt pins the exact versions the tests passed with.
+RUN pip install --no-cache-dir -c constraints.txt .
 
 # Models are downloaded and checksum-verified at build time, so the running
 # service needs no internet access. A mismatch fails the build.

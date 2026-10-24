@@ -135,6 +135,94 @@ def test_legacy_column_missing_is_refused(db_path):
         database.engine.dispose()
 
 
+def _legacy_ddl() -> dict[str, str]:
+    """CREATE TABLE statements exactly as the pre-migration create_all wrote them."""
+    import tempfile
+
+    from sqlalchemy import create_engine
+
+    with tempfile.TemporaryDirectory() as d:
+        engine = create_engine(f"sqlite:///{d}/ddl.db")
+        Base.metadata.create_all(engine)
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT name, sql FROM sqlite_master WHERE type='table'")).all()
+        engine.dispose()
+    return dict(rows)
+
+
+def _make_legacy(db_path, table, old, new):
+    """A legacy database where one table's DDL has `old` replaced by `new`."""
+    ddl = _legacy_ddl()
+    assert old in ddl[table], f"{old!r} not in {table} DDL: {ddl[table]}"
+    ddl[table] = ddl[table].replace(old, new, 1)
+    con = sqlite3.connect(db_path)
+    for name in ("admin_users", "login_sessions", "captures", "devices"):
+        con.execute(ddl[name])
+    con.commit()
+    con.close()
+
+
+def test_exact_legacy_ddl_matches(db_path):
+    _make_legacy(db_path, "devices", "rtsp_port", "rtsp_port")  # unchanged
+    database = Database(f"sqlite:///{db_path}")
+    try:
+        assert database.migrate().startswith("stamped legacy database")
+    finally:
+        database.engine.dispose()
+
+
+def test_varchar_length_difference_is_tolerated(db_path):
+    # SQLite does not enforce VARCHAR lengths; a different length is the same schema to it.
+    _make_legacy(db_path, "captures", "camera VARCHAR(64)", "camera VARCHAR(80)")
+    database = Database(f"sqlite:///{db_path}")
+    try:
+        assert database.migrate().startswith("stamped legacy database")
+    finally:
+        database.engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "table, old, new, fragment",
+    [
+        ("devices", "rtsp_port INTEGER NOT NULL", "rtsp_port VARCHAR(10) NOT NULL",
+         "devices.rtsp_port: type VARCHAR(10) (text), expected integer"),
+        ("captures", "created_at DATETIME NOT NULL", "created_at INTEGER NOT NULL",
+         "captures.created_at: type INTEGER (integer), expected datetime"),
+        ("devices", "host VARCHAR(253) NOT NULL", "host VARCHAR(253)",
+         "devices.host: nullable is True, expected False"),
+        ("captures", "file_name VARCHAR(128)", "file_name VARCHAR(128) NOT NULL",
+         "captures.file_name: nullable is False, expected True"),
+        ("admin_users", "UNIQUE (username)", "CHECK (1)", "admin_users.username: expected a UNIQUE constraint"),
+        ("login_sessions", "FOREIGN KEY(user_id) REFERENCES admin_users (id) ON DELETE CASCADE", "CHECK (1)",
+         "login_sessions.user_id: expected a foreign key to admin_users.id"),
+    ],
+    ids=["type-int-as-text", "type-datetime-as-int", "nullable-lost", "nullable-added", "unique-missing", "fk-missing"],
+)
+def test_legacy_constraint_mismatch_is_refused_and_untouched(db_path, table, old, new, fragment):
+    _make_legacy(db_path, table, old, new)
+    database = Database(f"sqlite:///{db_path}")
+    try:
+        with pytest.raises(SchemaMismatch) as exc:
+            database.migrate()
+        assert fragment in str(exc.value)
+        assert "alembic_version" not in inspect(database.engine).get_table_names()
+        assert _backups(db_path) == []  # nothing was even backed up, let alone changed
+        assert status(database.engine)["state"] == "legacy, DOES NOT match baseline"
+    finally:
+        database.engine.dispose()
+
+
+def test_diagnostic_contains_no_data(db):
+    _legacy_with_data(db)
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE devices ADD COLUMN surprise TEXT"))
+    with pytest.raises(SchemaMismatch) as exc:
+        db.migrate()
+    message = str(exc.value)
+    for secret in ("argon2-hash", "v1:ciphertext", "192.168.1.20", "Gate NVR"):
+        assert secret not in message
+
+
 def test_unrelated_database_is_refused(db):
     with db.engine.begin() as conn:
         conn.execute(text("CREATE TABLE something_else (id INTEGER PRIMARY KEY)"))

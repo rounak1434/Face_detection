@@ -47,8 +47,10 @@ Do not delete the database. Keep the logged differences and see [DATABASE.md](DA
    ```bash
    docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://inference:8100/v1/health').read())"
    ```
-5. **`413 too_large`** for a normal photo: the limit is 10 MB and 40 megapixels. Raise `ANALYSIS_MAX_IMAGE_BYTES` in `.env` if needed; Caddy also caps bodies at 12 MB.
-6. **`415 unsupported_format`**: only JPEG, PNG and WebP are accepted. HEIC photos from iPhones must be converted first.
+5. **`503 analysis_busy`**: two analyses were already running for 15 s. Wait and retry. Several people analysing at once, or a very slow network, can cause this.
+6. **`inference` restarting with exit code 137** in `docker compose ps -a`: it hit its memory cap. Very large images or a future heavier model can do this. Raise `INFERENCE_MEM_LIMIT` in `.env` (e.g. `2g`), then run `docker compose up -d`.
+7. **`413 too_large`** for a normal photo: the limit is 10 MB and 40 megapixels. Raise `ANALYSIS_MAX_IMAGE_BYTES` in `.env` if needed; Caddy also caps bodies at 12 MB.
+8. **`415 unsupported_format`**: only JPEG, PNG and WebP are accepted. HEIC photos from iPhones must be converted first.
 
 ## The header says "Engine unreachable"
 The api could not get `/api/version` from Frigate. Check these in order:
@@ -99,6 +101,7 @@ See [CAMERA-SETUP.md](CAMERA-SETUP.md#statuses) for what each status means.
 ## Sign-in problems
 - **"Too many failed attempts"**: wait 5 minutes.
 - **Forgotten password**: `docker compose exec api ai-surveillance create-admin <username>` resets it.
+- **"Your session has expired. Please sign in again."**: the server answered 401. Causes: the session timed out (`SESSION_TTL_HOURS`), an admin password was reset with `create-admin`, or the database was restored. Sign in again. Server errors (5xx) and network problems do **not** sign you out; they show an error and, on first load, a Retry button.
 - **Signed in but immediately signed out**: you are on plain `http://`. The session cookie is HTTPS-only. Use `https://`, or for local development without Caddy set `COOKIE_SECURE=false`.
 - **The browser shows a certificate warning**: install Caddy's root certificate (SETUP.md §6).
 
