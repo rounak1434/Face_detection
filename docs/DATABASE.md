@@ -86,20 +86,24 @@ chmod 600 backups/*
 1. **Self-restore check.** Refuses if FILE *is* the active database, under any spelling of the path (`resolve()` plus `os.path.samefile`, which also covers hard links and symlinks).
 2. **Verify FILE** (as `db verify`, above). A file that is not an intact database of this application is refused.
 3. **Temporary copy.** FILE is copied with SQLite's online backup API into `/data/app.db.restore-<time>.tmp`, next to `app.db` and so on the same filesystem. The copy is switched to `journal_mode=DELETE`, so it is one self-contained file with no `-wal`/`-shm`. The copy is verified again. When run as root, it is handed to the owner of `/data`.
-4. **In-use check** of the current `app.db`. Skipped if `app.db` does not exist.
-   - A file that does not start with SQLite's 16-byte header (`SQLite format 3\0`) is **not opened through SQLite at all**, so its leftover side files are not touched. It counts as unreadable.
-   - Otherwise the tool opens it and tries `BEGIN EXCLUSIVE` without waiting. A lock or busy error means another connection is reading or writing now: **refused** (exit `4`).
+4. **Integrity check, then in-use check** of the current `app.db`. Skipped if `app.db` does not exist.
+   - A file that does not start with SQLite's 16-byte header (`SQLite format 3\0`) is **not opened through SQLite at all**. It counts as unreadable.
+   - Otherwise `PRAGMA quick_check` runs **without changing any file**. With no side files, `app.db` is read as `immutable=1`. With side files, the check runs on a scratch copy of `app.db` and its `-wal`/`-journal`, in `/data/app.db.check-<time>/`, which is removed afterwards. A file whose header is valid but whose pages are damaged fails here and counts as **unreadable or damaged**.
+   - **Consistency of the check:** the size and modification time of `app.db`, `-wal`, `-shm` and `-journal` are recorded before and after it. If any of them changed, or a side file disappeared during the copy, something is using the database: **refused** (exit `4`, "changed while being checked"), even with `--replace-unreadable`. This catches writes that change size or modification time. It cannot prove that a copy taken during a write is consistent, so stopping the api is still required.
+   - If the scratch directory cannot be removed, it is left in place and its path is reported (a `Note:` in the output). The originals were not touched.
+   - Only an intact file is then opened for writing. The tool tries `BEGIN EXCLUSIVE` without waiting. A lock or busy error means another connection is reading or writing now: **refused** (exit `4`).
    - The tool closes its connection. SQLite's last connection removes `-wal`/`-shm` on a clean close. If **any `-wal`, `-shm` or `-journal` is still there afterwards, another connection is still open**, even an idle one holding no lock: **refused** (exit `4`). The other connection's WAL is left as it was.
-   - Opening the file lets SQLite fold committed WAL content into `app.db` (a checkpoint). The data is unchanged; only where it is stored changes.
-   - A file that passes is then checked with `PRAGMA quick_check`. A file whose header is valid but whose pages are damaged fails here and counts as **unreadable or damaged**.
+   - For an intact file, closing that connection lets SQLite fold committed WAL content into `app.db` (a checkpoint). The data is unchanged; only where it is stored changes.
+   - An unreadable or damaged file is **never opened for writing**, so it and its `-wal`/`-shm` stay exactly as found, whether the restore is refused or goes ahead.
 5. **Unreadable or damaged `app.db`** (no header, SQLite error, or `quick_check` not `ok`): **refused** (exit `4`) unless `--replace-unreadable` is given. See the risks below.
 6. **Independent copy of the old database** into a new directory `/data/pre-restore-<time>/`:
    - **readable `app.db`:** a separate file written with SQLite's backup API (reported as `"previous_database_preserved_by": "sqlite backup"`). It is **not a hard link**: later writes to `/data/app.db` never change it. It is opened with `immutable=1`, which is safe because step 4 showed no other connection and no side files. The copy is a single file, in `journal_mode=DELETE`.
-   - **unreadable or damaged `app.db`:** a byte-for-byte copy with its timestamps (`shutil.copy2`, reported as `"file copy"`), kept for inspection.
+   - **unreadable or damaged `app.db`:** a byte-for-byte copy, reported as `"file copy"` and kept for inspection. The bytes go into a new file, which is flushed; only then are the original's permissions and timestamps applied to it. This way a read-only `app.db` can be copied and flushed too.
    - `app.db` itself **stays in place** in `/data`.
    - Leftover `app.db-wal`, `app.db-shm` and `app.db-journal` are **moved** next to that copy. This can only happen when `app.db` is unreadable or missing, because a readable one with side files was refused in step 4. They are moved even when `app.db` itself is missing.
    - Nothing is deleted.
-7. **Atomic swap:** `os.replace` renames the temporary copy onto `app.db` in one step. On POSIX the tool then fsyncs the `/data` directory (best effort, see the durability limits below).
+   - The copy's contents are **flushed to the device** (`fsync`) right after it is written, both the `sqlite backup` and the `file copy`. If that flush fails, the restore stops and is rolled back (exit `5`): a recovery copy that may not be on disk is not relied on.
+7. **Flush, then atomic swap:** the tool fsyncs the temporary copy's contents, then the `pre-restore-<time>` directory and `/data` (directory entries; POSIX only, best effort). Then `os.replace` renames the temporary copy onto `app.db` in one step, and `/data` is fsynced again. See the durability limits below.
 8. **After the swap:** when run as root, the `pre-restore-<time>` directory is handed to the owner of `/data`; then the restored database is verified. Problems here are reported as warnings.
 
 The temporary file is always removed, after success or failure. Two restores started in the same second get distinct names (`-2`, `-3`, ...).
@@ -108,30 +112,46 @@ The temporary file is always removed, after success or failure. Two restores sta
 Use it only when the current database is really broken and you have stopped the api.
 - The in-use check of step 4 needs SQLite to open the file. For an unreadable or damaged file, **the tool cannot reliably rule out that the api or another process still has it open.** With this flag it replaces the file anyway. If something still has it open, that process keeps writing to the old file, now replaced, and its writes are lost.
 - The success output says so: `Note: the previous database was unreadable or damaged; it was replaced on request (--replace-unreadable), other users of it could not be reliably ruled out, and it was kept byte for byte for inspection.` The JSON shows `"previous_database_was_readable": false` and `"previous_database_preserved_by": "file copy"`.
-- The damaged `app.db`, and any side files, are kept unchanged in `pre-restore-<time>/`. A file without a SQLite header is never opened through SQLite. A file with a valid header is opened by the in-use check, so SQLite may fold its WAL into it before it is copied.
+- The damaged `app.db`, and any `-wal`, `-shm` and `-journal`, are kept byte for byte in `pre-restore-<time>/`: `app.db` is copied, the side files are moved. None of them is opened for writing before that. A damaged file is only read, as `immutable=1` or through a scratch copy.
 
 #### If something fails
-- **Steps 1–6, or the rename in step 7, fail:** everything done so far is undone. Moved side files are put back. The snapshot copy is removed together with the then-empty `pre-restore-<time>` directory. `app.db` was never moved or written by steps 5–7. Its content is unchanged, though step 4 may have checkpointed its WAL. Exit `4` (refused) or `5` (unexpected error), both saying "active database unchanged".
-- **A rollback step itself fails** (rare, e.g. permissions): nothing is guessed. The command exits `6` with `State uncertain: ...` and names every file still in `pre-restore-<time>/`. In this case `app.db` is still the previous database, but some of its side files are in that directory, and the snapshot is kept beside them. **Do not start the api until they are back in `/data`.** The original error is part of the message.
+- **Steps 1–6, or the rename in step 7, fail:** everything done so far is undone. Moved side files are put back. The snapshot copy is removed together with the then-empty `pre-restore-<time>` directory. `app.db` was never moved or written by steps 5–7. Its content is unchanged. For an intact `app.db`, step 4 may have checkpointed its WAL. An unreadable or damaged `app.db` and its side files are byte-for-byte unchanged. Exit `4` (refused) or `5` (unexpected error), both saying "active database unchanged".
+- **A rollback step itself fails** (rare, e.g. permissions): nothing is guessed. The command exits `6` with `State uncertain: ...` and lists each affected file with its full location. `app.db` is still the previous database, but some of its side files are in `pre-restore-<time>/`. The snapshot is **never deleted** in this case; it stays beside them. **Do not start the api.** With the api stopped, move each listed side file back into `/data`. The original error is part of the message.
+- **A side file reappears during the restore** (a new `app.db-wal`, for example, because something opened the database meanwhile): the moved one is **not** put back, because that would overwrite the newer file. It is listed as `kept in pre-restore-<time>, not moved back because a new app.db-wal appeared ... keep both and do not overwrite either`, with exit `6`, and the snapshot is kept. Both WAL files may hold data. Stop everything using the database and ask for help before deciding which to keep.
 - **Step 8 problems** happen after the restore has taken effect. They are reported as warnings (exit `3`, `Restored, with warnings: ...`), never as "not done".
+
+#### Ctrl-C (interruption)
+- **Before the rename:** everything done so far is rolled back, as for any failure. Exit `130`, `Not done (active database unchanged; everything done so far was rolled back): interrupted (Ctrl-C).`
+- **During the rollback:** exit `6`, `State uncertain: ... the rollback was interrupted (Ctrl-C)`, followed by every file in `pre-restore-<time>/` and every moved side file still in `/data`.
+- **After the rename** (including the instant right after it and the cleanup of the temporary file): nothing is rolled back, because putting the old side files back next to the new database would be wrong. Whether the rename happened is decided from the files themselves: `app.db` must carry the temporary file's identity (device and file id; on a filesystem without file ids, the temporary file must be gone). A temporary file that vanished for another reason before the rename is therefore not mistaken for a completed restore.
+- **During the cleanup after a failed rollback:** the `State uncertain` report (exit `6`) is kept, with `interrupted (Ctrl-C) while cleaning up` added. The interruption does not hide it. Exit `3`, `Interrupted: interrupted after the restored database replaced app.db; the final checks did not finish, so it is not verified. The previous database is in <path>. Run 'ai-surveillance db verify /data/app.db' before starting the api.`
+- **While the result is being printed** (after the restore or backup has finished; for example a Ctrl-C, or output piped into `head` that closes early): the command does not claim that nothing happened. A restore says `Restored: the restored database is active as app.db and verified, but printing the result was interrupted (...)`, with the `pre-restore` path and any warnings, and exits `3`. A backup says `Backup written and verified: <path>, but printing the result was interrupted (...)` and exits `3`. `db verify` says `Nothing changed: verify finished, but printing its result was interrupted` and exits `130` (Ctrl-C) or `5`. If stderr is gone too, the exit code alone still tells the truth.
+- **A narrow window that is not covered:** Python delivers a real Ctrl-C between any two steps of the program. If one arrives in the instant after `dbtools.restore()` has returned (the restore has finished) but before the CLI starts reporting the result, no handler is active. The command then ends with a Python traceback ending in `KeyboardInterrupt`, not with one of the messages above. It does **not** print `Not done (active database unchanged)` or any other claim that nothing happened. On POSIX the shell may still see exit status `130`, the usual status for an uncaught Ctrl-C; the traceback, not a `Not done` line, is what tells this case apart. If you see such a traceback after a restore, assume the restore may have taken effect: check for a new `pre-restore-<time>/` directory and run `ai-surveillance db verify /data/app.db` before starting the api. This window was found by reading the code; it is not exercised by a test, because a test cannot send a signal at that exact instant.
+- Other unexpected errors are not caught; they show a traceback as before.
 
 #### Messages and exit codes
 | Code | Message on stderr | Meaning |
 |---|---|---|
 | `0` | (JSON only; plus a `Note:` line after `--replace-unreadable`) | Restored and verified, no warnings |
 | `2` | `Restore replaces the database. Stop the api first ...` or `db restore needs a file path` | Usage error. Nothing done. |
-| `3` | `Restored, with warnings: ... The previous database is in pre-restore-<time>.` (or `There was no previous database.`) | **Restored**. Read the warnings. |
-| `4` | `Not done (active database unchanged): ...` | Refused: bad backup, self-restore, database in use, or unreadable/damaged `app.db` without `--replace-unreadable` |
-| `5` | `Not done (active database unchanged): <ErrorType>: ...` | Unexpected I/O or SQLite error before the swap, fully rolled back |
-| `6` | `State uncertain: ... Do not start the api until these are back in place: ...` | A rollback step failed. The message lists each affected file and where it is now. |
+| `3` | `Restored, with warnings: ... The previous database is in pre-restore-<time>.` (or `There was no previous database.`), `Interrupted: ... not verified ...`, or `Restored: ... but printing the result was interrupted` (also used by `db backup`: `Backup written and verified: ...`) | **Done**, but read the message. After `Interrupted:`, run `db verify` first. |
+| `4` | `Not done (active database unchanged): ...` | Refused: bad backup, self-restore, database in use or changed during the check, or unreadable/damaged `app.db` without `--replace-unreadable` |
+| `5` | `Not done (active database unchanged): <ErrorType>: ...` | Unexpected I/O or SQLite error before the swap (including a failed flush of the recovery copy), fully rolled back |
+| `6` | `State uncertain: ... Do not start the api. Files to check: ...` | A rollback step failed or was interrupted, or a side file reappeared. The message lists each affected file and where it is now. |
+| `130` | `Not done (...): interrupted (Ctrl-C).` | Ctrl-C before the swap, fully rolled back (restore); no backup written (backup) |
 
-`db backup` removes its own partial file if it fails (exit `5`, `Not done (no backup written)`). `db verify` exits `4` when the file is not ok.
+`db backup` removes its own partial file if it fails (exit `5`, `Not done (no backup written)`), and exits `3` when the backup was written but printing its result was interrupted. `db verify` exits `4` when the file is not ok.
 
 #### Durability and crash limits
 - **Not crash-atomic across files.** The only atomic step is the single rename of one file onto `app.db`. The restore as a whole involves several files (the temporary copy, the snapshot, moved side files), and **no claim is made that the whole operation is crash-atomic across multiple SQLite files.** What holds is narrower: `app.db` is always either the complete old file or the complete new file, and a cut-off before the rename leaves the old one in use.
-- **Directory fsync** after the rename is done on POSIX only, as best effort; errors are ignored. Windows has no equivalent, so it is skipped there. The temporary copy and the `sqlite backup` snapshot are written by SQLite, which syncs them at commit. The `file copy` of a damaged database is a plain copy and is not fsynced.
-- **Tested:** a process killed hard (`os._exit`) just before the rename, on Windows. **Not tested:** power loss, kernel crash, or a crash on Linux. After a power loss the filesystem decides whether a rename that had just happened survives. The tool cannot guarantee it.
+- **File contents** of the recovery copy (both kinds) and of the temporary copy are fsynced before the rename. A failed flush stops the restore. On Windows, `os.fsync` maps to `_commit`, which flushes the file's buffers.
+- **Directory entries** (the new `pre-restore-<time>` directory, the moved side files and the rename) are fsynced on POSIX only, as best effort. Errors are ignored there, because some filesystems reject fsync on directories. Windows cannot fsync a directory, so it is skipped. So on Windows, and on such filesystems, a power loss right after the restore could lose the new directory entries even though the file contents were flushed.
+- **Tested:** a process killed hard (`os._exit`) just before the rename, on Windows. The order of the flushes is checked with recorded calls, and a failing flush is checked to roll back. **Not tested:** power loss, kernel crash, or a crash on Linux. These tests do not simulate a power loss. After a power loss the filesystem and the storage device decide what survives; the tool cannot guarantee it.
 - If `/data/app.db` is ever missing, the api creates a new **empty** database at startup (see the note below).
+
+#### Read-only `app.db`
+- **Linux:** a rename may replace a read-only file when `/data` itself is writable, so a read-only damaged `app.db` can be replaced with `--replace-unreadable`. **Not run here** (no Linux).
+- **Windows:** the operating system refuses to rename over a read-only file. The restore stops at the rename and rolls back: exit `5`, `Not done (active database unchanged): PermissionError: ...`, and nothing is left behind (tested). Clear the read-only attribute of `app.db` yourself first if you want to replace it.
 
 #### Known limits of the in-use check
 - **Idle-connection detection relies on WAL mode.** The api always uses WAL. A process using the file in rollback-journal mode while idle leaves no side file and holds no lock, so the tool cannot see it. Stopping the api, as the procedure says, is still required.
@@ -142,6 +162,7 @@ A restore cut off before the rename in step 7 **leaves the old `app.db` in place
 | You see | Meaning | What to do |
 |---|---|---|
 | `/data/app.db.restore-<time>.tmp` | The verified copy, never activated | Remove it, or run the restore again. |
+| `/data/app.db.check-<time>/` | Scratch copy from the integrity check of step 4 | Remove it. It is a copy only; the originals were not touched. |
 | `/data/pre-restore-<time>/app.db` | An independent copy of the old database, complete or partial | Run `db verify` on it. If it is ok, it is a valid fallback. If not, it was cut off mid-write; the old `app.db` is still in `/data`. |
 | `-wal` / `-shm` / `-journal` in `pre-restore-<time>/`, missing from `/data` | Only possible when the old `app.db` was unreadable or missing: side files moved just before the cut-off | They belong to the damaged file next to them. Keep them together for inspection. |
 | Neither | The cut-off happened before step 6 | Nothing to clean up. |
@@ -227,6 +248,7 @@ Backups are **never deleted automatically**. Suggested practice:
   - restore with stale and committed WAL files, and side files when `app.db` is missing
   - the refusals: in use (lock held), **idle open connection** (side files left after close), self-restore
   - an unreadable `app.db` (no header) and a **damaged `app.db` with a valid header**: both refused without `--replace-unreadable`, both replaced and kept byte for byte with it, with a note that other users could not be ruled out
+  - a **damaged `app.db` with a `-wal` and `-shm`**: a refusal leaves all three byte for byte unchanged, and a replacement keeps all three byte for byte; an intact `app.db` with leftover side files restores normally and leaves no scratch copy
   - the preserved copy is an independent file (not a hard link)
   - file names: `#`, space, a literal `%25` and non-ASCII (`ü`) restore the named file (run on Windows); `?` is skipped on Windows, where it is not a legal file-name character; percent-encoding of `#`, `?`, `%` and space is also unit-tested as a string
   - a symlink to the active database refused as a self-restore: **skipped on this Windows PC** (creating symlinks needs a privilege not granted here)
@@ -234,9 +256,16 @@ Backups are **never deleted automatically**. Suggested practice:
   - a killed process just before the swap: the old database stays in place, the api starts on it, the preserved copy is unaffected by later writes, and restoring that copy works
   - an active database left untouched after a copy, verify, snapshot, move or rename failure
   - a failed rollback reporting uncertain paths, with the original error kept
+  - a side file that reappears during the restore: never overwritten, reported (exit `6`), snapshot and moved file kept
+  - flushes: the recovery copy (both kinds), the temporary copy and the directories flushed before the rename (call order recorded; no power loss simulated); a failing flush rolls back (exit `5`)
+  - Ctrl-C at five points: before anything changed (`130`), during the snapshot (`130`, rolled back), during the rollback (`6`), right after the rename (`3`, no rollback, old WAL not put back), during the final checks (`3`)
+  - Ctrl-C in the cleanup of the temporary file: after the rename (`3`, restored, not "unchanged"), after a failed rollback (`6` kept), after a failed rename (`130`); a temporary file that vanished before the rename (`5`, not mistaken for a restore); file identity kept across a rename
+  - the CLI's output failing after the operation finished (Ctrl-C or broken pipe): restore `3` "Restored", with warnings repeated; backup `3` "Backup written"; verify `130` / `5` "Nothing changed"; stderr gone too; a failure before the swap still says "unchanged"
+  - a read-only damaged `app.db`: its byte copy is flushed while writable and then gets the original's permissions and timestamps; on Windows the restore is refused cleanly at the rename (exit `5`); a rollback removes the read-only copy. The Linux replacement test is **skipped here** (Windows).
+  - the integrity check refusing when files change during it, reporting a scratch copy it could not remove, and leaving a `-journal` untouched
   - warnings, not errors, after the swap
   - two restores in the same second
   - the restored file opening normally in the api
   - CLI exit codes 0 / 3 / 4 / 5 / 6, with truthful messages and no tracebacks
-- Not covered by tests: power loss, any run on Linux (including the idle-connection and symlink cases), and a process using the database in rollback-journal mode.
+- Not covered by tests: power loss, any run on Linux (including the idle-connection, symlink, `?` file-name and directory-fsync cases), and a process using the database in rollback-journal mode. A real Ctrl-C signal is not sent; the tests raise `KeyboardInterrupt` at chosen points.
 - These tests always use temporary databases. Never point tests at a real database.

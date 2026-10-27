@@ -63,49 +63,115 @@ def db_file_command(action: str, path: str | None, yes: bool, replace_unreadable
     from . import dbtools
 
     db_path = _sqlite_file()
+    # Only the operation itself runs inside this try: its handlers describe a
+    # database that was not changed. Printing the result happens afterwards,
+    # in _report, so a broken pipe or a Ctrl-C there is never mistaken for a
+    # failed operation.
     try:
         if action == "backup":
             dest, result = dbtools.backup(db_path, Path(path) if path else None)
-            print(json.dumps({"backup": str(dest), **result}, indent=2))
-            return 0
-        if not path:
+            result = {"backup": str(dest), **result}
+        elif not path:
             print(f"db {action} needs a file path", file=sys.stderr)
             return 2
-        if action == "verify":
+        elif action == "verify":
             result = dbtools.verify(Path(path))
-            print(json.dumps(result, indent=2))
-            return 0 if result["ok"] else 4
-        if not yes:
+        elif not yes:
             print("Restore replaces the database. Stop the api first (docker compose stop api), "
                   "then repeat with --yes.", file=sys.stderr)
             return 2
-        # From here on, restore() raises only before the active database
-        # changed (fully rolled back) or with RestoreStateUncertain. Once the
-        # swap has happened it returns, with any problems in "warnings".
-        result = dbtools.restore(db_path, Path(path), replace_unreadable=replace_unreadable)
-        print(json.dumps(result, indent=2))
-        where = (f" The previous database is in {result['previous_files']}."
-                 if result["previous_files"] else " There was no previous database.")
-        for note in result.get("notes", []):
-            print(f"Note: {note}.", file=sys.stderr)
-        if result["warnings"]:
-            print("Restored, with warnings: " + "; ".join(result["warnings"]) + "." + where, file=sys.stderr)
-            return 3
-        return 0
+        else:
+            # restore() raises only before the active database changed (fully
+            # rolled back), with RestoreStateUncertain, or with
+            # RestoreInterruptedAfterSwap on a Ctrl-C after the swap. Otherwise,
+            # once the swap has happened, it returns with problems in "warnings".
+            result = dbtools.restore(db_path, Path(path), replace_unreadable=replace_unreadable)
+    except dbtools.RestoreInterruptedAfterSwap as exc:
+        print(f"Interrupted: {exc} Run 'ai-surveillance db verify {db_path}' before starting the api."
+              + _notes(exc), file=sys.stderr)
+        return 3
     except dbtools.RestoreStateUncertain as exc:
-        print(f"State uncertain: {exc}. Do not start the api until these are back in place: "
-              + "; ".join(exc.paths), file=sys.stderr)
+        print(f"State uncertain: {exc}. Do not start the api. Files to check: "
+              + "; ".join(exc.paths) + _notes(exc), file=sys.stderr)
         return 6
     except (dbtools.InvalidBackup, dbtools.DatabaseInUse, dbtools.ActiveUnreadable) as exc:
         state = "active database unchanged" if action == "restore" else "nothing written"
-        print(f"Not done ({state}): {exc}", file=sys.stderr)
+        print(f"Not done ({state}): {exc}" + _notes(exc), file=sys.stderr)
         return 4
     except (sqlite3.Error, OSError) as exc:
         # Unexpected I/O or SQLite failure (disk full, permissions, ...).
         # restore() only gets here before its swap, after a complete rollback.
         state = "active database unchanged" if action == "restore" else "no backup written"
-        print(f"Not done ({state}): {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Not done ({state}): {type(exc).__name__}: {exc}" + _notes(exc), file=sys.stderr)
         return 5
+    except KeyboardInterrupt as exc:
+        # restore() lets a bare KeyboardInterrupt through only before its swap
+        # and after a complete rollback; backup() removes its partial file.
+        state = {"restore": "active database unchanged; everything done so far was rolled back",
+                 "backup": "no backup written"}.get(action, "nothing written")
+        print(f"Not done ({state}): interrupted (Ctrl-C)." + _notes(exc), file=sys.stderr)
+        return 130
+
+    # The operation has finished. Anything that goes wrong from here on is
+    # about showing its result, not about the database.
+    try:
+        return _report(action, db_path, result)
+    except (KeyboardInterrupt, OSError) as exc:
+        return _report_interrupted(action, db_path, result, exc)
+
+
+def _report(action: str, db_path: Path, result: dict) -> int:
+    print(json.dumps(result, indent=2))
+    if action == "backup":
+        return 0
+    if action == "verify":
+        return 0 if result["ok"] else 4
+    for note in result.get("notes", []):
+        print(f"Note: {note}.", file=sys.stderr)
+    if result["warnings"]:
+        print("Restored, with warnings: " + "; ".join(result["warnings"]) + "." + _previous(result),
+              file=sys.stderr)
+        return 3
+    return 0
+
+
+def _previous(result: dict) -> str:
+    return (f" The previous database is in {result['previous_files']}."
+            if result["previous_files"] else " There was no previous database.")
+
+
+def _report_interrupted(action: str, db_path: Path, result: dict, exc: BaseException) -> int:
+    """The operation finished, but printing its result failed (Ctrl-C, closed pipe).
+
+    Says what actually happened, on stderr, as far as stderr still works.
+    restore and backup exit 3 (done, with a warning); verify, which changed
+    nothing, exits 130 on Ctrl-C or 5 otherwise.
+    """
+    reason = "Ctrl-C" if isinstance(exc, KeyboardInterrupt) else f"{type(exc).__name__}: {exc}"
+    if action == "restore":
+        message = (f"Restored: the restored database is active as {db_path.name}"
+                   f"{' and verified' if result['ok'] else ', but it failed verification'}, "
+                   f"but printing the result was interrupted ({reason}).{_previous(result)}"
+                   + "".join(f" Warning: {w}." for w in result["warnings"])
+                   + "".join(f" Note: {n}." for n in result.get("notes", []))
+                   + f" Run 'ai-surveillance db verify {db_path}' to see the result again.")
+        code = 3
+    elif action == "backup":
+        message = (f"Backup written and verified: {result['backup']}, but printing the result was "
+                   f"interrupted ({reason}).")
+        code = 3
+    else:
+        message = f"Nothing changed: verify finished, but printing its result was interrupted ({reason})."
+        code = 130 if isinstance(exc, KeyboardInterrupt) else 5
+    try:
+        print(message, file=sys.stderr)
+    except (KeyboardInterrupt, OSError):
+        pass  # stderr is gone too; the exit code still tells the truth
+    return code
+
+
+def _notes(exc: BaseException) -> str:
+    return "".join(f" Note: {n}." for n in getattr(exc, "__notes__", []))
 
 
 def db_command(action: str) -> int:
