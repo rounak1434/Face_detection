@@ -196,3 +196,62 @@ def test_nvidia_override_switches_image(compose):
     image = override["services"]["frigate"]["image"]
     assert image.endswith("-tensorrt")
     assert image.split(":")[1].startswith(compose["services"]["frigate"]["image"].split(":")[1])
+    # The one-shot init uses Frigate's image in both setups, so it never pulls a second image.
+    assert compose["services"]["frigate-init"]["image"] == compose["services"]["frigate"]["image"]
+    assert override["services"]["frigate-init"]["image"] == image
+
+
+# --- Apply to Frigate (ADR-0003) ---------------------------------------------
+
+def _mounts(svc) -> dict[str, str]:
+    """container path -> 'source[:mode]'"""
+    out = {}
+    for volume in svc.get("volumes", []):
+        if isinstance(volume, str):
+            source, target, *mode = volume.split(":")
+            out[target] = source + (f":{mode[0]}" if mode else "")
+    return out
+
+
+def test_frigates_live_config_is_not_the_tracked_template(compose):
+    frigate = _mounts(compose["services"]["frigate"])
+    assert frigate["/config"] == "./storage/frigate-config", "Frigate must not write the git-tracked file"
+    assert not any(src.startswith("./frigate") for src in frigate.values())
+    gitignore = (ROOT / ".gitignore").read_text().splitlines()
+    assert "deploy/storage/" in gitignore
+
+
+def test_init_seeds_the_live_config_only_once_and_prepares_the_secrets_volume(compose):
+    init = compose["services"]["frigate-init"]
+    mounts = _mounts(init)
+    assert mounts["/template/config.yml"] == "./frigate/config.yml:ro"
+    assert mounts["/config"] == "./storage/frigate-config"
+    assert mounts["/secrets"] == "frigate-secrets"
+    script = " ".join(init["entrypoint"])
+    assert "[ -f /config/config.yml ] || cp /template/config.yml /config/config.yml" in script  # never overwrites
+    assert "chown 10001 /secrets" in script and "chmod 700 /secrets" in script
+    assert "useradd --system --uid 10001" in (ROOT / "backend" / "Dockerfile").read_text()
+    assert init["restart"] == "no" and init["network_mode"] == "none" and "ports" not in init
+    assert compose["services"]["frigate"]["depends_on"]["frigate-init"] == {"condition": "service_completed_successfully"}
+
+
+def test_secrets_volume_is_shared_only_by_api_and_frigate(compose):
+    users = {name: _mounts(svc) for name, svc in compose["services"].items()}
+    holders = {name for name, mounts in users.items() if "frigate-secrets" in {s.split(":")[0] for s in mounts.values()}}
+    assert holders == {"api", "frigate", "frigate-init"}
+    assert users["frigate"]["/run/secrets"] == "frigate-secrets:ro"  # the path env.py and go2rtc read
+    assert users["api"]["/frigate-secrets"] == "frigate-secrets"
+    assert "frigate-secrets" in compose["volumes"]
+
+
+def test_api_is_set_up_for_apply_to_frigate(compose):
+    api = compose["services"]["api"]
+    env, mounts = api["environment"], _mounts(api)
+    assert mounts[env["FRIGATE_CONFIG_TEMPLATE"]] == "./frigate/config.yml:ro"
+    assert mounts[env["FRIGATE_SECRETS_DIR"]] == "frigate-secrets"
+    assert env["FRIGATE_PREVIOUS_CONFIG_FILE"].startswith("/data/")  # the api-data volume
+
+
+def test_frigate_still_gets_no_saved_device_credentials_by_environment(compose):
+    env = compose["services"]["frigate"]["environment"]
+    assert not any(key.startswith("FRIGATE_DEV_") for key in env)

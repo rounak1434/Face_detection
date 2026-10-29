@@ -71,7 +71,7 @@ The api could not get `/api/version` from Frigate. Check these in order:
 ## The camera tile says "Still frames" instead of "Live"
 Hover over the badge to see the reason.
 - `browser lacks MSE`: iPhone Safari before iOS 17.1 has no MediaSource. Still frames are the intended fallback.
-- `unsupported stream format`: the browser cannot play the codec. Firefox plays only H.264 over MSE. Switch the NVR sub stream to H.264, or reorder `live.streams` in `frigate/config.yml`.
+- `unsupported stream format`: the browser cannot play the codec. Firefox plays only H.264 over MSE. Switch the NVR sub stream to H.264, or reorder `live.streams` in the template `deploy/frigate/config.yml` and press **Apply to Frigate** (SETUP.md section 4a).
 - `live connection closed`: check `docker compose logs api` for "Live stream ... unavailable". In Frigate's UI (127.0.0.1:8971), check that the go2rtc stream exists.
 
 ## The picture is a grey "camera error" image, or snapshots fail with "Camera is offline"
@@ -98,6 +98,16 @@ See [CAMERA-SETUP.md](CAMERA-SETUP.md#statuses) for what each status means.
 - **"Stored credential cannot be decrypted"**: the credentials key changed. Re-enter the password, or restore the old `credentials.key` from your backup.
 - **The webcam doesn't start**: the browser needs https or localhost. Allow camera access in the browser's site settings.
 
+## "Apply to Frigate" fails
+How it works: SETUP.md section 4a and [ADR-0003](adr/0003-saved-devices-to-frigate.md). The message never contains a password.
+- **"not set up: FRIGATE_CONFIG_TEMPLATE and FRIGATE_SECRETS_DIR are needed"**: the api runs without the Compose settings, for example on a dev PC. In Docker they are set by `compose.yaml`.
+- **"Frigate refused the configuration"**: Frigate checked it and kept its previous configuration; the message is Frigate's reason. Usually the template has an error; fix it and apply again.
+- **"Use in Frigate" switch is greyed out**: test the device first; only a **Connected** device can be switched on.
+- **"…did not restart" or "…did not come back within 180 s", then "The previous configuration was restored"**: Frigate was slow or failed with the new configuration; nothing is lost. Check `docker compose logs frigate`. A slow machine can raise `FRIGATE_RESTART_TIMEOUT_SECONDS` for the api.
+- **"Restoring the previous configuration also failed"**: Frigate is down. Check `docker compose ps -a` and `docker compose logs frigate`. The secret files for both configurations stay in place, so whichever configuration Frigate starts with can run. To go back by hand: `docker compose cp api:/data/frigate-config.previous.yml ./previous.yml`, then `sudo cp previous.yml storage/frigate-config/config.yml` and `docker compose restart frigate`.
+- **Frigate's log says "Invalid substitution found"** at startup: go2rtc found a `{FRIGATE_*}` name with no secret file or variable. Apply keeps the secret files of the previous and the new configuration until it has finished, so this points to a hand-edited config or a removed volume: apply again, or start over from the template (SETUP.md section 4a).
+- **"An apply to Frigate is already running"**: wait for it to finish (a few minutes at most).
+
 ## Sign-in problems
 - **"Too many failed attempts"**: wait 5 minutes.
 - **Forgotten password**: `docker compose exec api ai-surveillance create-admin <username>` resets it.
@@ -117,4 +127,4 @@ See [CAMERA-SETUP.md](CAMERA-SETUP.md#statuses) for what each status means.
 
 ## GPU not used
 - Run `docker run --rm --gpus all ubuntu nvidia-smi`. If it fails, the NVIDIA Container Toolkit is missing.
-- Check that you started with `-f compose.nvidia.yaml` and that `deploy/frigate/model_cache/yolo.onnx` exists.
+- Check that you started with `-f compose.nvidia.yaml` and that `deploy/storage/frigate-config/model_cache/yolo.onnx` exists.

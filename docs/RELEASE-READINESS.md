@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `6afaddb`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `9c343c5`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -14,7 +14,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | Capture retention, free-space guard | Done (tests only) | `CAPTURE_MIN_FREE_MB` (default 1024): captures refused with 507 below the floor, also checked before a clip is downloaded; `CAPTURE_RETENTION_DAYS` (default 0 = keep): old finished captures deleted at startup and hourly, one commit per capture; an unreadable free-space value pauses captures (507). `test_capture_storage.py` (20), Windows and Linux. Real full disk and the real hourly timer not observed. Frigate's own recordings and exports are governed by Frigate's settings, not by these. |
 | Camera stream reconnection | Delegated to Frigate | Not our code; behaviour on a real camera drop: Blocked. |
 | RTSP probe (`ai-surveillance probe`) | Done (tests only) | `rtsp.py`; credentials masked. Needs ffprobe: Blocked here. |
-| Camera & NVR setup page (CRUD, encrypted passwords, SSRF guard, test) | Done (tests only) | `devices.py`, `routes/devices.py`, `netguard.py`; `test_devices.py`. "Apply to Frigate" exists (mocked Frigate only) but stays disabled until the Compose change (ADR-0003 step 5), so **saved devices do not reach Frigate yet** (Partial for the product). |
+| Camera & NVR setup page (CRUD, encrypted passwords, SSRF guard, test) | Done (tests only) | `devices.py`, `routes/devices.py`, `netguard.py`; `test_devices.py`. "Apply to Frigate" feeds switched-on, connected devices to Frigate (ADR-0003, all 5 steps), tested with a simulated Frigate and static Compose checks only: **Partial until one real apply on the Ubuntu host**. |
 | Face detection (YuNet), crops, quality hints | Done (verified, dev PC) | Real model on the public-domain fixture; `inference/tests`. Accuracy on CP Plus footage: not measured. |
 | Face tracking across frames | Missing | Frigate tracks objects (person); no face tracks of our own. |
 | Face recognition, enrollment, consent records (milestone 2) | **Missing** | No code. Engine choice (Frigate built-in vs. own matcher) still to be evaluated per ADR-0001. |
@@ -41,13 +41,14 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | 5 | Reliability | Health checks for frigate and web; `depends_on: condition: service_healthy` where useful | `docker compose ps` shows health for all services | `deploy/compose.yaml`, `test_deploy_config.py` | static test; host check Blocked |
 | 6 | Release | **Done 2026-10-29:** CI: backend, inference, frontend tests and build on push; add `ruff` | Workflow green on the branch | `.github/workflows/ci.yml`, `pyproject.toml` | the workflow itself |
 | 7 | UX (low) | Move the side effect out of the `setUser` updater in `App.tsx` | Session-expired notice shown once under StrictMode | `App.tsx` | `session.test.tsx` |
-| 8 | Feature (M1 gap) | Feed saved devices to Frigate. **Design accepted in [ADR-0003](adr/0003-saved-devices-to-frigate.md)** (Frigate 0.18.2 API checked in source; option A). Steps 1–4 of 5 done (config renderer with placeholders only; secret-file writer: atomic, owner-only, stale files removed, snapshot and restore; "Use in Frigate" switch: migration `0002`, API, UI, only for connected devices; "Apply to Frigate": restart first when a secret is new, then `config/save` with restart, verification and rollback, mocked Frigate only); next: Compose (template and secrets volume, Frigate's live config off the tracked file) and setup docs; then the real-stack check | A saved, tested device appears as a Frigate camera without editing `.env` | `devices.py`, Frigate config generation, docs | unit tests; Blocked for the real NVR |
+| 8 | Feature (M1 gap) | Feed saved devices to Frigate. **Design accepted in [ADR-0003](adr/0003-saved-devices-to-frigate.md)** (Frigate 0.18.2 API checked in source; option A). Steps 1–4 of 5 done (config renderer with placeholders only; secret-file writer: atomic, owner-only, stale files removed, snapshot and restore; "Use in Frigate" switch: migration `0002`, API, UI, only for connected devices; "Apply to Frigate": restart first when a secret is new, then `config/save` with restart, verification and rollback, mocked Frigate only). **Step 5 done:** Compose (live config in `storage/frigate-config` seeded once by `frigate-init`, `frigate-secrets` volume at `/run/secrets`), secret files ordered so go2rtc can always start, SETUP 4a and TROUBLESHOOTING. Remaining: the real-stack check (SETUP section 6, synthetic source), Blocked on the Ubuntu host | A saved, tested device appears as a Frigate camera without editing `.env` | `devices.py`, Frigate config generation, docs | unit tests; Blocked for the real NVR |
 | 9 | Feature (M2) | Recognition engine evaluation, then enrollment with consent, matching (`AUTHORIZED`/`UNRECOGNIZED`/`INCONCLUSIVE`/`SYSTEM_ERROR`) | Per ADR-0001; needs a decision and test footage | new modules, migrations | large; plan separately |
 | 10 | Feature (M3/M4) | Events with MQTT, attribute estimates, alerts and alarm output | Per ARCHITECTURE milestones; alarm only after hardware verification | new | plan separately |
 
 ## Hardware- and host-dependent checks (Blocked)
 - Build all images; `docker compose config` and `up` on Ubuntu; `doctor.sh`; `run-integration-tests.sh`.
 - Frigate accepts the config; test stream; live view, snapshot and clip through the real stack.
+- `frigate-init` seeds the live config and prepares the secrets volume; one "Apply to Frigate" with the synthetic source (two restarts, camera listed), then one that removes it.
 - CP Plus NVR main/sub streams (models not yet recorded); GTX 1650 detection; start on boot and power recovery.
 
 ## Deployment blockers

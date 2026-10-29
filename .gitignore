@@ -8,7 +8,8 @@ deploy/secrets/
 media/
 data/
 deploy/storage/
-# Frigate writes its database, backups and model cache next to its config.
+# deploy/frigate/config.yml is the template; Frigate's live config, database and
+# model cache live in deploy/storage/frigate-config (ignored above).
 deploy/frigate/*
 !deploy/frigate/config.yml
 *.db

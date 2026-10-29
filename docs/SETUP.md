@@ -93,11 +93,11 @@ Never commit `deploy/.env`. It is gitignored.
 | Action | Command (run in `~/ai-surveillance/deploy`) |
 |---|---|
 | Start (and build) | `docker compose up -d --build` |
-| Status | `docker compose ps` (frigate, api, inference, web, test-stream) |
+| Status | `docker compose ps -a` (frigate, api, inference, web, test-stream; `frigate-init` shows **Exited (0)**, which is normal: it runs once before Frigate) |
 | Logs | `docker compose logs -f frigate` (or `api`, `inference`, `web`, `test-stream`) |
 | Stop, keeping all data | `docker compose down` |
 | Restart one service | `docker compose restart api` |
-| Update after `git pull` | Back up first ([DATABASE.md](DATABASE.md)), then `docker compose up -d --build`. The api migrates the database on start. |
+| Update after `git pull` | Back up first ([DATABASE.md](DATABASE.md)), then `docker compose up -d --build`. The api migrates the database on start. Changes to the Frigate template reach Frigate at the next **Apply to Frigate** (section 4a). |
 | Database schema status | `docker compose exec api ai-surveillance db status` |
 | Delete **all** data | `docker compose down -v && sudo rm -rf storage`. This deletes recordings, captures, accounts and the credentials key. |
 
@@ -110,6 +110,23 @@ Stop following with Ctrl+C.
 With `COMPOSE_PROFILES=test-stream` in `.env`, every `docker compose` command includes the synthetic test stream. It is a moving test pattern, H.264 1280×720 at 15 fps, at `rtsp://test-stream:8554/test` inside the stack. On the host itself it is at `rtsp://127.0.0.1:8554/test`.
 
 Detection runs on the **CPU** by default. The GPU is optional (section 8).
+
+## 4a. Frigate's configuration and saved devices
+| File or volume | What it is | Who changes it |
+|---|---|---|
+| `deploy/frigate/config.yml` (tracked in git) | The **template**: the `entrance` camera from `.env`, recording, detector settings | You, through git. Frigate never writes it. |
+| `deploy/storage/frigate-config/config.yml` | Frigate's **live** config. Copied from the template by `frigate-init` on the first start only; Frigate's database and model cache sit next to it. | "Apply to Frigate" (through Frigate's own API), or Frigate's UI |
+| Docker volume `ai-surveillance_frigate-secrets` | One file per saved device stream (`FRIGATE_DEV_<id>_MAIN` / `_SUB`) holding its RTSP URL with the password. Mounted read-only in Frigate as `/run/secrets`, read-write in the api. Owner-only files. | The api, during "Apply to Frigate" |
+
+**To show saved devices in Frigate:** on the **Camera & NVR Setup** page, test each device until it shows **Connected**, switch on **Use in Frigate**, then press **Apply to Frigate** and confirm.
+- Frigate restarts: **twice** when a device was added (Frigate reads secret files only when it starts, and it refuses a new stream whose secret it has not loaded), otherwise once. Live view and recording stop for about a minute per restart.
+- The `entrance` camera stays. A device switched on but no longer **Connected** (for example after editing it) is skipped and listed.
+- If Frigate refuses the configuration, or does not come back with the expected cameras, the previous configuration and secret files are restored automatically. The configuration from before the last apply is also kept in the api volume as `frigate-config.previous.yml`.
+- Each apply builds the whole configuration from the template, so it also brings template changes to Frigate. Changes made in Frigate's own UI are replaced by the next apply; make lasting changes in the template.
+
+**To start Frigate's live config over from the template:** `docker compose stop frigate`, then `sudo mv storage/frigate-config/config.yml storage/frigate-config/config.yml.old`, then `docker compose up -d`. Saved devices return at the next apply.
+
+**Upgrading an install from before this layout** (Frigate's files were in `deploy/frigate/`): before `docker compose up -d`, run `sudo mkdir -p storage/frigate-config` and move Frigate's own files there, for example `sudo mv frigate/frigate.db* frigate/model_cache storage/frigate-config/` (whatever exists). Leave `frigate/config.yml` where it is: it is the template.
 
 ## 5. Create the administrator
 ```bash
@@ -139,6 +156,7 @@ docker compose exec api ai-surveillance create-admin admin
 2. **Snapshot** saves a JPEG into Captures.
 3. **Save 10 s clip**: wait at least one minute after start so recordings exist. The clip appears as "pending", then "ready".
 4. **Camera & NVR Setup tab:** click **Add synthetic test source**, then **Test connection**. It should show **Connected (h264 1280×720)**.
+   - Then switch on **Use in Frigate** for it and press **Apply to Frigate**. After one to two minutes the page reports `Frigate now runs Synthetic test stream as "synthetic_test_stream"`, and the Live tab lists that camera next to **entrance**. Please send the result: this is the first real check of section 4a.
 5. **AI analysis tab:**
    - Models shows **yunet: Ready**.
    - Choose a photo you are allowed to use, then click **Detect faces**. You should see boxes, 5 keypoints per face and face crops, labelled "Real model inference".
@@ -193,15 +211,15 @@ Everything works without this, on the CPU. Do it only after the CPU setup works.
    ```bash
    docker run --rm --gpus all ubuntu nvidia-smi
    ```
-3. Export a YOLOv9-s 320×320 ONNX model as described at https://docs.frigate.video/configuration/object_detectors, and save it as `deploy/frigate/model_cache/yolo.onnx`.
-4. Uncomment the `detectors`/`model` block in `deploy/frigate/config.yml`.
+3. Export a YOLOv9-s 320×320 ONNX model as described at https://docs.frigate.video/configuration/object_detectors, and save it as `deploy/storage/frigate-config/model_cache/yolo.onnx` (the folder belongs to root: use `sudo`).
+4. Uncomment the `detectors`/`model` block in the template `deploy/frigate/config.yml`, then press **Apply to Frigate** on the setup page (section 4a). Without saved devices, editing the same block in `deploy/storage/frigate-config/config.yml` with `sudo` works too.
 5. Start with the GPU override, which also switches to the `-tensorrt` image:
    ```bash
    docker compose -f compose.yaml -f compose.nvidia.yaml up -d
    ```
 6. Record `detectors.*.inference_speed` from Frigate's `/api/stats` in VERIFICATION.md.
 
-**To fall back to the CPU:** re-comment the block, then run `docker compose up -d` without the override.
+**To fall back to the CPU:** re-comment the block, apply it the same way, then run `docker compose up -d` without the override.
 
 ## 9. Later: connect the CP Plus NVR
 1. **Find the exact models.** Read the NVR and camera model numbers from the device labels or the web UI, and record them in VERIFICATION.md. Do not assume a model.
@@ -215,10 +233,11 @@ Everything works without this, on the CPU. Do it only after the CPU setup works.
    docker compose run --rm -e NVR_MAIN_URL -e NVR_SUB_URL api \
      ai-surveillance probe --env NVR_MAIN_URL --env NVR_SUB_URL
    ```
-5. **Switch the stack to the NVR.**
+5. **Add NVR channels without editing `.env`** (section 4a): add each channel as a device on the setup page, test it until it shows **Connected**, switch on **Use in Frigate**, and press **Apply to Frigate**. The detect size comes from the connection test.
+6. **Or switch the fixed `entrance` camera to the NVR.**
    1. In `.env`, set `FRIGATE_CAMERA_MAIN_URL` and `FRIGATE_CAMERA_SUB_URL` to the probed URLs. URL-encode special characters in the password.
    2. Remove `COMPOSE_PROFILES=test-stream`.
-   3. Set `detect.width` and `detect.height` in `frigate/config.yml` to the sub-stream resolution.
+   3. Set `detect.width` and `detect.height` in the template `deploy/frigate/config.yml` to the sub-stream resolution; it reaches Frigate at the next **Apply to Frigate** (or edit the live config, section 4a).
    4. Restart:
       ```bash
       docker compose up -d --remove-orphans

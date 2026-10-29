@@ -12,6 +12,27 @@
 name: ai-surveillance
 
 services:
+  # One-shot, before Frigate (ADR-0003): seeds Frigate's live config from the
+  # tracked template only if none exists yet (it then belongs to Frigate and
+  # "Apply to Frigate"; git never changes it), and prepares the secrets
+  # volume so only the api user (uid 10001) may write it. Same image as
+  # Frigate, so nothing extra is downloaded; no network.
+  frigate-init:
+    image: ghcr.io/blakeblackshear/frigate:0.18.2
+    restart: "no"
+    network_mode: none
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        set -e;
+        [ -f /config/config.yml ] || cp /template/config.yml /config/config.yml;
+        chown 10001 /secrets; chmod 700 /secrets
+    volumes:
+      - ./frigate/config.yml:/template/config.yml:ro
+      - ./storage/frigate-config:/config
+      - frigate-secrets:/secrets
+
   frigate:
     # Standard image (CPU detector). compose.nvidia.yaml switches to the
     # -tensorrt image and passes the GPU through.
@@ -23,7 +44,11 @@ services:
       FRIGATE_CAMERA_MAIN_URL: ${FRIGATE_CAMERA_MAIN_URL:?set FRIGATE_CAMERA_MAIN_URL in .env}
       FRIGATE_CAMERA_SUB_URL: ${FRIGATE_CAMERA_SUB_URL:?set FRIGATE_CAMERA_SUB_URL in .env}
     volumes:
-      - ./frigate:/config
+      # Live config (written by "Apply to Frigate" through Frigate's API), database, model cache.
+      - ./storage/frigate-config:/config
+      # Saved devices' stream URLs, one file per stream, written by the api. Frigate and its go2rtc
+      # read /run/secrets at startup (frigate/config/env.py, go2rtc/create_config.py).
+      - frigate-secrets:/run/secrets:ro
       - ./storage/frigate-media:/media/frigate
       - type: tmpfs
         target: /tmp/cache
@@ -31,6 +56,9 @@ services:
           size: 1000000000
     ports:
       - "127.0.0.1:8971:8971"
+    depends_on:
+      frigate-init:
+        condition: service_completed_successfully
     networks: [internal]
 
   api:
@@ -46,6 +74,10 @@ services:
       FRIGATE_USERNAME: ${FRIGATE_USERNAME:-}
       FRIGATE_PASSWORD: ${FRIGATE_PASSWORD:-}
       FRIGATE_VERIFY_TLS: ${FRIGATE_VERIFY_TLS:-true}
+      # "Apply to Frigate" (ADR-0003): template in, secret files out.
+      FRIGATE_CONFIG_TEMPLATE: /app/frigate-template/config.yml
+      FRIGATE_SECRETS_DIR: /frigate-secrets
+      FRIGATE_PREVIOUS_CONFIG_FILE: /data/frigate-config.previous.yml
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
       CLIP_DEFAULT_SECONDS: ${CLIP_DEFAULT_SECONDS:-10}
       CLIP_MAX_SECONDS: ${CLIP_MAX_SECONDS:-60}
@@ -63,6 +95,8 @@ services:
     # be created root-owned and the service could not write its database).
     volumes:
       - api-data:/data
+      - ./frigate/config.yml:/app/frigate-template/config.yml:ro
+      - frigate-secrets:/frigate-secrets
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
       interval: 30s
@@ -118,3 +152,5 @@ networks:
 volumes:
   api-data: {}
   caddy-data: {}
+  # Shared only by the api (read-write) and Frigate (read-only).
+  frigate-secrets: {}

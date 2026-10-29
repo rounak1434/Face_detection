@@ -63,3 +63,8 @@ The apply (`frigate_apply.py`) now:
 7. On any failure after step 3: previous secret files back; if Frigate's file had changed, restart (to load the previous secrets, which `config/save` needs), save the previous config with a restart, and check it. If that also fails, the message names the kept file.
 
 Only one apply runs at a time. Live view and recording pause for about one minute per restart.
+
+## Amendment (2026-10-29, step 5): go2rtc and the order of secret files
+Frigate's go2rtc config is generated at every container start by `docker/main/rootfs/usr/local/go2rtc/create_config.py`, which reads `FRIGATE_*` files from the hard-coded `/run/secrets` and **exits** on a stream placeholder without a value. So whenever Frigate may start, the secret files must cover the config file on disk. The apply therefore writes the previous **and** the new secret files before the first restart (the old file may still refer to a device that is being removed), and removes the unused ones only after Frigate runs the new config; a restore does the same in reverse. If Frigate cannot be reached during a restore, both sets stay.
+
+Compose (step 5): Frigate's live config is `deploy/storage/frigate-config/` (untracked), seeded once from the template by the one-shot `frigate-init` service, which also makes the `frigate-secrets` volume writable only by the api user (uid 10001). Frigate mounts that volume read-only at `/run/secrets` (the path both `env.py` and go2rtc read); the api mounts it at `/frigate-secrets` and the template read-only.

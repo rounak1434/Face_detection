@@ -1,6 +1,8 @@
 # Gives Frigate the NVIDIA GPU. Needs the NVIDIA driver and the NVIDIA
 # Container Toolkit on the host (see docs/SETUP.md section 8).
 services:
+  frigate-init:
+    image: ghcr.io/blakeblackshear/frigate:0.18.2-tensorrt  # same image as frigate: no extra download
   frigate:
     image: ghcr.io/blakeblackshear/frigate:0.18.2-tensorrt
     deploy:

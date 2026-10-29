@@ -9,6 +9,11 @@ Frigate 0.18.2 facts this relies on (checked in its source):
   newly added device needs a restart *before* the save, to load its secret.
 - `/api/config/save` validates before writing (400 keeps the old file) and,
   with `save_option=restart`, restarts Frigate after writing.
+- At every start, go2rtc's config is built from the saved file and the
+  /run/secrets files (`docker/main/rootfs/usr/local/go2rtc/create_config.py`);
+  a placeholder without a value stops go2rtc. So whenever Frigate may restart,
+  the secret files cover both the file on disk and the one being saved: the
+  apply writes old plus new secrets and removes the unused ones only at the end.
 
 Sequence: build everything first (nothing changes on failure), keep Frigate's
 current config and the current secret files, write the new secret files,
@@ -158,16 +163,19 @@ async def _save_and_restart(frigate: FrigateClient, settings: Settings, text: st
 
 
 async def _restore(frigate: FrigateClient, settings: Settings, secrets: FrigateSecrets,
-                   previous_secrets: dict[str, str], previous_config: str) -> int:
+                   previous_secrets: dict[str, str], new_secrets: dict[str, str], previous_config: str) -> int:
     """Put the previous secret files and config back; returns the number of restarts."""
-    secrets.replace_all(previous_secrets)
     if await frigate.config_raw() == previous_config:
-        return 0  # the config was never replaced; the extra secrets loaded in Frigate are unused
-    # Load the previous secrets first: config/save refuses placeholders Frigate cannot resolve.
+        secrets.replace_all(previous_secrets)  # the config was never replaced
+        return 0
+    # Frigate's file is the new one: keep its secrets too (go2rtc needs them at the next start)
+    # and restart to load the previous ones, which config/save needs to accept the old config.
+    secrets.replace_all({**new_secrets, **previous_secrets})
     await frigate.restart()
     await wait_for_restart(frigate, settings)
     await _save_and_restart(frigate, settings, previous_config)
     await _verify(frigate, previous_config, set())
+    secrets.replace_all(previous_secrets)
     return 2
 
 
@@ -184,7 +192,8 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
 
     new_names = set(plan.secrets) - set(previous_secrets)
     try:
-        secrets.replace_all(plan.secrets)
+        # Old and new: the file on disk still refers to the previous secrets until the save.
+        secrets.replace_all({**previous_secrets, **plan.secrets})
     except SecretWriteError as exc:
         try:
             secrets.replace_all(previous_secrets)
@@ -212,7 +221,7 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
         reason = plan.redact(str(failure))
         log.warning("Apply to Frigate failed (%s); restoring the previous configuration", reason)
         try:
-            restarts += await _restore(frigate, settings, secrets, previous_secrets, previous_config)
+            restarts += await _restore(frigate, settings, secrets, previous_secrets, plan.secrets, previous_config)
         except (FrigateError, SecretWriteError) as exc:
             log.error("Restoring Frigate's previous configuration failed: %s", plan.redact(str(exc)))
             raise ApplyError(502, f"{reason}. Restoring the previous configuration also failed "
@@ -220,5 +229,9 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
                              "in the api data directory.") from None
         raise ApplyError(502, f"{reason}. The previous configuration was restored.") from None
 
+    try:
+        secrets.replace_all(plan.secrets)  # drop the secrets the saved config no longer uses
+    except SecretWriteError as exc:
+        log.warning("Unused Frigate secret files could not be removed (%s); the next apply retries", exc)
     log.info("Applied %d saved device(s) to Frigate with %d restart(s)", len(plan.cameras), restarts)
     return {"cameras": plan.cameras, "skipped": plan.skipped, "restarts": restarts}

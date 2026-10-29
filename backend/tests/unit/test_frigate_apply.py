@@ -46,10 +46,14 @@ class FakeFrigate:
 
     # --- simulated process lifecycle
     def _start(self):
-        """Frigate's startup: env.py reads FRIGATE_* files from /run/secrets once."""
+        """Frigate's startup: env.py reads FRIGATE_* files from /run/secrets once, and go2rtc's
+        create_config.py exits on a stream placeholder without a value (go2rtc then does not run)."""
         self.env = set(CONTAINER_ENV) | {p.name for p in self.secrets_dir.iterdir() if p.name.startswith("FRIGATE_")}
         self.restarting = False
-        self.events.append("started")
+        streams = yaml.safe_load(self.file)["go2rtc"]["streams"] or {}
+        missing = sorted({var for sources in streams.values() for source in sources
+                          for var in PLACEHOLDER.findall(source) if var not in self.env})
+        self.events.append(f"go2rtc-failed:{','.join(missing)}" if missing else "started")
 
     def version(self, request):
         if self.restarting:
@@ -203,6 +207,20 @@ def test_without_the_first_restart_frigate_would_refuse_the_new_stream(signed_in
     assert resp.status_code == 400 and "Unknown variable in go2rtc stream: gate_nvr" in resp.text
 
 
+def test_replacing_one_device_with_another_keeps_go2rtc_startable(signed_in, settings, fake, secrets_dir):
+    """The first restart runs the old file with the new secrets: the old device's secret must still be there."""
+    old = _approved(signed_in, settings)
+    assert _apply(signed_in).status_code == 200
+    signed_in.put(f"/api/devices/{old['id']}/frigate", json={"use_in_frigate": False})
+    new = _approved(signed_in, settings, name="Back Door", host="192.168.1.21")
+    fake.events.clear()
+    resp = _apply(signed_in)
+    assert resp.status_code == 200, resp.text
+    assert fake.events == ["restart", "started", "save", "started"]  # no go2rtc failure at either start
+    assert set(_secret_files(secrets_dir)) == {secret_name(new["id"], "main"), secret_name(new["id"], "sub")}
+    assert "gate_nvr" not in yaml.safe_load(fake.file)["cameras"]
+
+
 def test_reapply_with_the_same_devices_restarts_once(signed_in, settings, fake, secrets_dir):
     device = _approved(signed_in, settings)
     assert _apply(signed_in).status_code == 200
@@ -277,10 +295,26 @@ def test_missing_camera_after_restart_restores_previous_config_and_secrets(signe
     assert _secret_files(secrets_dir) == {}
     # restart (load secret), save+restart, then restore: restart (old secrets), save+restart
     assert fake.events.count("restart") == 2 and fake.events.count("save") == 2
+    assert not [e for e in fake.events if e.startswith("go2rtc-failed")]
+
+
+def test_restore_after_replacing_a_device_keeps_go2rtc_startable(signed_in, settings, fake, secrets_dir):
+    old = _approved(signed_in, settings)
+    _apply(signed_in)
+    before_file, before_secrets = fake.file, _secret_files(secrets_dir)
+    signed_in.put(f"/api/devices/{old['id']}/frigate", json={"use_in_frigate": False})
+    _approved(signed_in, settings, name="Back Door", host="192.168.1.21")
+    fake.drop_cameras = {"back_door"}
+    fake.events.clear()
+    resp = _apply(signed_in)
+    assert resp.status_code == 502 and "previous configuration was restored" in resp.json()["detail"]
+    assert not [e for e in fake.events if e.startswith("go2rtc-failed")], fake.events
+    assert fake.file == before_file
+    assert _secret_files(secrets_dir) == before_secrets
 
 
 def test_frigate_not_coming_back_reports_where_the_previous_config_is(signed_in, settings, fake, secrets_dir):
-    _approved(signed_in, settings)
+    device = _approved(signed_in, settings)
     fake.never_back = True
     resp = _apply(signed_in)
     assert resp.status_code == 502
@@ -288,7 +322,8 @@ def test_frigate_not_coming_back_reports_where_the_previous_config_is(signed_in,
     assert "did not come back" in detail and "Restoring the previous configuration also failed" in detail
     assert "frigate-config.previous.yml" in detail and str(settings.frigate_previous_config_file.parent) not in detail
     assert settings.frigate_previous_config_file.read_text() == TEMPLATE_PATH.read_text()
-    assert _secret_files(secrets_dir) == {}  # secrets were put back before Frigate was needed
+    # Which file Frigate will start with is unknown, so the secrets for both stay: go2rtc can start either way.
+    assert set(_secret_files(secrets_dir)) == {secret_name(device["id"], "main"), secret_name(device["id"], "sub")}
 
 
 def test_frigate_unreachable_before_apply_changes_nothing(signed_in, settings, frigate, secrets_dir):
