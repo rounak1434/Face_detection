@@ -12,6 +12,7 @@ from .config import Settings, get_settings
 from .credentials import CredentialCipher, load_key
 from .db import Database
 from .deps import AppState
+from .face_events import Ingestor, face_ingest_loop, face_retention_loop
 from .frigate_client import FrigateClient
 from .media import MediaStore
 from .inference_client import InferenceClient
@@ -37,6 +38,8 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         partials = store.remove_partials()
         if partials:
             log.info("Removed %d partial capture file(s) left by a restart", partials)
+        face_store = MediaStore(settings.media_root, "faces")
+        face_store.remove_partials()
         app.state.app = AppState(
             settings=settings,
             db=db,
@@ -46,11 +49,16 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
             cipher=CredentialCipher(load_key(settings)),
             inference=InferenceClient(settings),
             analysis_slots=asyncio.Semaphore(settings.analysis_concurrency),
+            face_store=face_store,
         )
-        if settings.capture_retention_days > 0:
-            app.state.app.spawn(retention_loop(db.sessionmaker, store, settings.capture_retention_days))
-        yield
         state: AppState = app.state.app
+        if settings.capture_retention_days > 0:
+            state.spawn(retention_loop(db.sessionmaker, store, settings.capture_retention_days))
+        if settings.face_events_enabled:
+            state.spawn(face_ingest_loop(Ingestor(settings, state.frigate, state.inference, db.sessionmaker, face_store)))
+        if settings.face_event_retention_days > 0:
+            state.spawn(face_retention_loop(db.sessionmaker, face_store, settings.face_event_retention_days))
+        yield
         for task in list(state.background):
             task.cancel()
         await state.frigate.aclose()

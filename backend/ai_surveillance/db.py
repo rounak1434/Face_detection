@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, false
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, false
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -85,6 +85,47 @@ class Device(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # Operator approval for "Apply to Frigate" (ADR-0003); applied only while status is "connected".
     use_in_frigate: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+
+
+class FaceEvent(Base):
+    """One Frigate person event, analysed once for faces (ADR-0004). Detection only: no identity."""
+
+    __tablename__ = "face_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    frigate_event_id: Mapped[str] = mapped_column(String(30), unique=True)  # one row per Frigate event
+    camera: Mapped[str] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # faces_detected | no_faces_detected | frame_unavailable | frame_rejected | inference_failed | gave_up
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    face_count: Mapped[int] = mapped_column(Integer, default=0)
+    frame_source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # recording | snapshot
+    frame_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    frame_file: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    frame_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frame_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detector: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "yunet 2023mar"
+    detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FaceDetection(Base):
+    """A face found in a face event's frame: where, how confident, how usable. Not who."""
+
+    __tablename__ = "face_detections"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    event_id: Mapped[str] = mapped_column(ForeignKey("face_events.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(Integer)  # order by detection score within the event
+    box_x: Mapped[int] = mapped_column(Integer)
+    box_y: Mapped[int] = mapped_column(Integer)
+    box_w: Mapped[int] = mapped_column(Integer)
+    box_h: Mapped[int] = mapped_column(Integer)
+    score: Mapped[float] = mapped_column(Float)
+    keypoints: Mapped[str] = mapped_column(Text)  # JSON, 5 [x, y] pairs
+    quality: Mapped[str] = mapped_column(Text)  # JSON: face_px, small_face, touches_edge, sharpness
+    crop_file: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 def make_engine(database_url: str) -> Engine:

@@ -13,8 +13,9 @@ _SAFE_NAME = re.compile(r"^[a-f0-9]{32}\.(jpg|mp4)$")
 
 
 class MediaStore:
-    def __init__(self, root: Path) -> None:
-        self.captures_dir = (root / "captures").resolve()
+    def __init__(self, root: Path, subdir: str = "captures") -> None:
+        # "captures" for operator snapshots and clips, "faces" for face-event frames and crops.
+        self.captures_dir = (root / subdir).resolve()
         self.captures_dir.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, file_name: str) -> Path:

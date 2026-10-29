@@ -206,10 +206,16 @@ class FrigateClient:
         `after` filters on the event's start time (Frigate: `Event.start_time > after`).
         Entries without a usable id, camera or times are skipped.
         """
-        data = await self._json("GET", "/api/events", params={
-            "labels": "person", "has_snapshot": 1, "in_progress": 0,
-            "after": after, "sort": "date_asc", "limit": limit,
-        })
+        return (await self.person_events_page(after, limit, 0))[0]
+
+    async def person_events_page(self, after: float, limit: int, offset: int) -> tuple[list[PersonEvent], int]:
+        """One page of person_events, plus how many entries Frigate returned before filtering
+        (a full page means there may be more)."""
+        params = {"labels": "person", "has_snapshot": 1, "in_progress": 0,
+                  "after": after, "sort": "date_asc", "limit": limit}
+        if offset:
+            params["offset"] = offset
+        data = await self._json("GET", "/api/events", params=params)
         if not isinstance(data, list):
             raise FrigateError("Frigate events response is not a list")
         events = []
@@ -221,7 +227,7 @@ class FrigateClient:
             if (isinstance(event_id, str) and _EVENT_ID.match(event_id) and isinstance(camera, str) and camera
                     and isinstance(start, int | float) and isinstance(end, int | float)):
                 events.append(PersonEvent(event_id, camera, float(start), float(end)))
-        return events
+        return events, len(data)
 
     async def event_snapshot(self, event_id: str) -> tuple[bytes, float | None]:
         """The event's best frame without overlays, and its frame time (header X-Frame-Time).

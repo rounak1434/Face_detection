@@ -28,6 +28,7 @@ class AppState:
     cipher: CredentialCipher
     inference: InferenceClient
     analysis_slots: asyncio.Semaphore
+    face_store: MediaStore | None = None  # media/faces: face-event frames and crops
     background: set[asyncio.Task] = field(default_factory=set)
     device_tests: dict[str, float] = field(default_factory=dict)  # device id -> last test time
     frigate_apply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # one "Apply to Frigate" at a time

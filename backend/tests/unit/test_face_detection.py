@@ -205,6 +205,20 @@ def test_frigate_server_error_on_the_recording_is_temporary(settings, mock):
         detect(settings)
 
 
+@pytest.mark.parametrize("bad", [
+    {**FACE, "box": {"x": 1, "y": 2, "w": 3}},  # missing h
+    {**FACE, "box": {"x": "1", "y": 2, "w": 3, "h": 4}},
+    {**FACE, "score": None},
+    {**FACE, "keypoints5": [[1, 2]] * 4},
+    {**FACE, "keypoints5": [[1, "x"]] * 5},
+    "not a face",
+])
+def test_malformed_face_entries_are_skipped(settings, mock, bad):
+    mock["detect"].respond(200, json=detect_result([bad, FACE]))
+    result = detect(settings)
+    assert [f.box for f in result.faces] == [FACE["box"]]
+
+
 def test_damaged_crop_is_dropped_not_fatal(settings, mock):
     damaged = {**FACE, "crop": {**FACE["crop"], "jpeg_base64": "%%%not-base64"}}
     mock["detect"].respond(200, json=detect_result([damaged]))

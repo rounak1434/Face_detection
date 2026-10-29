@@ -50,6 +50,7 @@ def settings(tmp_path) -> Settings:
         credentials_key_file=tmp_path / "credentials.key",
         device_test_cooldown_seconds=0,
         capture_min_free_mb=0,  # independent of the test machine's disk; test_capture_storage sets it
+        face_events_enabled=False,  # the ingestion loop is driven directly in test_face_events.py
         _env_file=None,
     )
 

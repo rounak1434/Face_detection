@@ -19,6 +19,7 @@ Later revisions:
 | Revision | Change | Downgrade |
 |---|---|---|
 | `0002_device_use_in_frigate` | `devices.use_in_frigate` (boolean, not null, default false): the operator's "Use in Frigate" approval (ADR-0003). Existing devices start switched off. | Drops the column; device rows are kept |
+| `0003_face_events` | Tables `face_events` (one row per Frigate person event: unique `frigate_event_id`, camera, start/end, status, face count, frame source/time/file/size, detector, detail) and `face_detections` (box, detection score, keypoints and quality as JSON, crop file; deleted with their event). See [FACE-EVENTS.md](FACE-EVENTS.md). | Drops both tables; the image files under `media/faces/` stay on disk and must be removed by hand if wanted |
 
 SQLite runs with `journal_mode=WAL`, `busy_timeout=5000` ms and `foreign_keys=ON`.
 

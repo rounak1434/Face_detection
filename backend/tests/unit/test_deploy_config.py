@@ -114,6 +114,14 @@ def test_ci_runs_lint_and_every_test_suite():
     assert "npm ci" in runs["frontend"] and "npm test" in runs["frontend"] and "npm run build" in runs["frontend"]
 
 
+def test_face_event_settings_reach_the_api_with_the_documented_defaults(compose):
+    env, example = compose["services"]["api"]["environment"], _env_example()
+    assert env["FACE_EVENTS_ENABLED"] == "${FACE_EVENTS_ENABLED:-true}" and example["FACE_EVENTS_ENABLED"] == "true"
+    assert env["FACE_EVENT_RETENTION_DAYS"] == "${FACE_EVENT_RETENTION_DAYS:-30}"
+    assert example["FACE_EVENT_RETENTION_DAYS"] == "30"
+    assert env["FACE_FRAME_SOURCE"] == "${FACE_FRAME_SOURCE:-recording}" and example["FACE_FRAME_SOURCE"] == "recording"
+
+
 def test_frigate_export_cleanup_setting_reaches_the_api(compose):
     assert compose["services"]["api"]["environment"]["CLIP_KEEP_FRIGATE_EXPORT"] == "${CLIP_KEEP_FRIGATE_EXPORT:-false}"
     assert _env_example()["CLIP_KEEP_FRIGATE_EXPORT"] == "false"

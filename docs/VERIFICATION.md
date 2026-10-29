@@ -221,6 +221,18 @@ Unit and simulated tests only. **No real Docker, Frigate, go2rtc, camera, NVR or
 
 Backend: Windows **470 passed, 8 skipped**; Linux (fresh clone of `ae8373e` + this change) **476 passed, 2 skipped**; `ruff` clean.
 
+## Face integration, Phase 3: face events stored, deduplicated, retained, 2026-10-29, base `427b691`
+| Kind | Evidence | Result |
+|---|---|---|
+| Unit / mocked integration | `test_face_events.py` (19): a simulated Frigate `/api/events` (start time > `after`, oldest first, `limit`/`offset`) and mocked inference, with a real temporary SQLite database (real migrations) and real files. Covers: rows, detections, frame and crop files; no images for events without faces; one row per Frigate event across polls and a restart; cursor (backfill on first run, newest start minus lookback afterwards); a long event that appears later; paging beyond 50 and past a full page of known events; a temporary failure stops the poll and resumes in order; `gave_up` after 3 tries; Frigate down; low disk pauses before analysing; a failed image write leaves no files and no rows; a duplicate save keeps one row and removes its files; retention with files, and keeping an event whose file cannot be removed; delete; backfill window; the app starts and skips the loops per settings | 19 passed (Windows and Linux; 3/3 repeats on Linux) |
+| | `test_face_detection.py`: 6 new cases, malformed face entries skipped | passed |
+| Migration | `0003_face_events`: model drift check, fresh database at head, downgrade/upgrade round trip (`test_migrations.py`); revision recorded by `dbtools` (`test_dbtools.py`) | passed |
+| Static | `test_deploy_config.py`: `FACE_EVENTS_ENABLED`, `FACE_EVENT_RETENTION_DAYS`, `FACE_FRAME_SOURCE` reach the api, defaults equal `.env.example` | passed |
+| Real model | `test_real_yunet_finds_the_face_in_a_frigate_snapshot` again (WSL): box (257, 115, 76, 102), score 0.9416 | passed |
+| Real Frigate / camera / Docker | none | not run |
+
+Backend: Windows **496 passed, 8 skipped**; Linux (fresh clone of `427b691` + this change) **502 passed, 2 skipped**; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

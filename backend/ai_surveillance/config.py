@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     face_frame_source: Literal["recording", "snapshot"] = "recording"
     face_min_score: float = Field(default=0.7, ge=0.0, le=1.0)
     face_max_faces: int = Field(default=10, ge=1, le=100)
+    # Ingestion of finished Frigate person events into face events.
+    face_events_enabled: bool = True
+    face_poll_seconds: float = Field(default=10.0, gt=0)
+    # Frigate filters events by start time, so each poll looks back this far from the newest
+    # stored event: an event longer than this that ends later is missed.
+    face_event_lookback_seconds: int = Field(default=3600, ge=60)
+    # On the very first run (no face events stored yet), start this far in the past.
+    face_backfill_seconds: int = Field(default=3600, ge=0)
+    # An event that keeps failing for a temporary reason is recorded as "gave_up" after this many tries.
+    face_max_attempts: int = Field(default=3, ge=1)
+    # Face events (rows, frames, crops) older than this many days are deleted hourly; 0 keeps them.
+    face_event_retention_days: int = Field(default=30, ge=0)
 
     session_ttl_hours: int = 12
     # Set to false only for plain-HTTP local development.

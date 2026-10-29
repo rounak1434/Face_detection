@@ -73,6 +73,23 @@ async def _frame(event: PersonEvent, frigate: FrigateClient, settings: Settings)
     return snapshot, "snapshot", frame_time, None
 
 
+_BOX = ("x", "y", "w", "h")
+
+
+def _number(value) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _valid_face(face) -> bool:
+    """Only well-formed faces are kept: a malformed entry must not stall storage later."""
+    if not isinstance(face, dict):
+        return False
+    box, points = face.get("box"), face.get("keypoints5")
+    return (isinstance(box, dict) and all(_number(box.get(k)) for k in _BOX) and _number(face.get("score"))
+            and isinstance(points, list) and len(points) == 5
+            and all(isinstance(p, list) and len(p) == 2 and all(_number(v) for v in p) for p in points))
+
+
 def _crop(face: dict) -> bytes | None:
     crop = face.get("crop")
     if not isinstance(crop, dict) or not isinstance(crop.get("jpeg_base64"), str):
@@ -107,9 +124,9 @@ async def detect_event_faces(event: PersonEvent, frigate: FrigateClient, inferen
     if not isinstance(result, dict) or not isinstance(result.get("faces"), list):
         raise InferenceUnavailable("Face detection returned an unexpected response")
     faces = [
-        DetectedFace(box=f["box"], score=float(f["score"]), keypoints5=f["keypoints5"], quality=f.get("quality") or {},
-                     crop_jpeg=_crop(f))
-        for f in result["faces"] if isinstance(f, dict) and {"box", "score", "keypoints5"} <= f.keys()
+        DetectedFace(box={k: int(f["box"][k]) for k in _BOX}, score=float(f["score"]), keypoints5=f["keypoints5"],
+                     quality=f.get("quality") if isinstance(f.get("quality"), dict) else {}, crop_jpeg=_crop(f))
+        for f in result["faces"] if _valid_face(f)
     ]
     image = result.get("image") or {}
     log.info("Event %s (%s): %d face(s) in the %s frame", event.id, event.camera, len(faces), source)

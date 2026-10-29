@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8. Decisions 3–5 in section 7 are still open.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9. Decisions 3–5 in section 7 are still open.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -139,3 +139,13 @@ There is deliberately **no** endpoint that enrolls from an event or crop.
 - Not yet: no background loop, nothing stored, settings not passed by Compose (Phase 3). Detection only; nothing identifies anyone.
 - Evidence: `backend/tests/unit/test_face_detection.py`, 23 mocked tests (Frigate via respx, inference mocked) and 1 test with the **real YuNet** in-process on the public-domain fixture served as a Frigate snapshot: box (257, 115, 76, 102), score 0.9416, identical to AI-ANALYSIS.md. The real-model test needs the inference package and model alongside the backend: it ran in WSL; it is skipped on Windows and in CI's backend job.
 - Open for Phase 10: the size of real faces in the recording versus the snapshot at the door, and the recording's availability right after an event ends (segments are flushed in steps; the fallback covers a missing segment).
+
+## 9. Phase 3: face events stored, deduplicated, retained (done, 2026-10-29)
+Operator description: [FACE-EVENTS.md](../FACE-EVENTS.md). Differences from section 5's draft schema, deliberately:
+- `face_events` has no `recognition_state` and `face_detections` no `outcome`, `person_id`, `similarity`: those belong to recognition and are added by its own migration in Phase 6, so nothing pretends to be recognition before it exists.
+- No cursor table: the cursor is derived from the newest stored `started_at` minus the lookback, which survives restarts without extra state; the unique `frigate_event_id` makes reprocessing harmless. Paging (`offset`, 50 per page, at most 20 pages per poll) keeps a full page of known events from hiding newer ones.
+- A frame is kept only for `faces_detected` events (data minimisation); other outcomes store the row only. Statuses gained `gave_up` (temporary failure on the same event `FACE_MAX_ATTEMPTS` times).
+- Temporary failures stop the poll instead of skipping the event, so the cursor cannot move past an event that was never analysed.
+- Free-space floor shared with captures (`CAPTURE_MIN_FREE_MB`); retention `FACE_EVENT_RETENTION_DAYS` (default 30) runs hourly, files before rows, one commit per event.
+- Found while writing the tests: a malformed face entry from the inference service would have raised inside `save()` on every poll and stalled ingestion on that event; `face_detection` now keeps only well-formed faces (box with four numbers, numeric score, five numeric keypoints).
+Evidence: `test_face_events.py` (19, mocked Frigate and inference, real SQLite and files), migration model-drift and round-trip tests, `test_deploy_config.py`.
