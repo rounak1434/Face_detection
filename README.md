@@ -51,6 +51,7 @@ Then open https://localhost/.
 ```bash
 cd backend && python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest                     # unit tests (tests/unit, mocked engine, no network)
+.venv/bin/ruff check .               # lint (same rules as CI: .github/workflows/ci.yml)
 .venv/bin/pytest -m integration      # real-stack tests (tests/integration); skipped unless IT_BASE_URL is set
 FRIGATE_URL=http://<frigate-host>:5000 COOKIE_SECURE=false .venv/bin/ai-surveillance create-admin admin
 FRIGATE_URL=http://<frigate-host>:5000 COOKIE_SECURE=false .venv/bin/uvicorn --factory ai_surveillance.main:app --port 8000

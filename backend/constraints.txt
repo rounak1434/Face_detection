@@ -41,6 +41,7 @@ python-dotenv==1.2.4
 python-multipart==0.0.32
 PyYAML==6.0.3
 respx==0.23.1
+ruff==0.17.3
 SQLAlchemy==2.1.6
 starlette==1.9.0
 typing-inspection==0.4.4

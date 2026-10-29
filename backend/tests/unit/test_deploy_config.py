@@ -102,6 +102,18 @@ def test_capture_storage_settings_reach_the_api(compose):
     assert example["CAPTURE_MIN_FREE_MB"] == "1024" and example["CAPTURE_RETENTION_DAYS"] == "0"
 
 
+def test_ci_runs_lint_and_every_test_suite():
+    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    assert ci["permissions"] == {"contents": "read"}
+    jobs = ci["jobs"]
+    runs = {name: " ".join(s.get("run", "") for s in job["steps"]) for name, job in jobs.items()}
+    for job in ("backend", "inference"):
+        assert jobs[job]["defaults"]["run"]["working-directory"] == job
+        assert "-c constraints.txt" in runs[job] and "ruff check" in runs[job] and "pytest" in runs[job]
+    assert "inference_service.download" in runs["inference"], "the real-model tests must not be skipped in CI"
+    assert "npm ci" in runs["frontend"] and "npm test" in runs["frontend"] and "npm run build" in runs["frontend"]
+
+
 def test_frigate_export_cleanup_setting_reaches_the_api(compose):
     assert compose["services"]["api"]["environment"]["CLIP_KEEP_FRIGATE_EXPORT"] == "${CLIP_KEEP_FRIGATE_EXPORT:-false}"
     assert _env_example()["CLIP_KEEP_FRIGATE_EXPORT"] == "false"
@@ -133,7 +145,7 @@ def test_frigate_restream_inputs_match_go2rtc_streams(frigate):
 
 
 def test_frigate_018_record_schema(frigate):
-    for name, cam in frigate["cameras"].items():
+    for cam in frigate["cameras"].values():
         record = cam["record"]
         assert "retain" not in record, "record.retain was removed in Frigate 0.18"
         assert record["enabled"] is True and record["continuous"]["days"] > 0
@@ -171,7 +183,8 @@ def test_inference_has_a_memory_limit(compose):
 def test_images_install_with_pinned_constraints(service):
     dockerfile = (ROOT / service / "Dockerfile").read_text()
     assert "-c constraints.txt" in dockerfile and "constraints.txt" in dockerfile.split("COPY", 2)[1]
-    pins = [l for l in (ROOT / service / "constraints.txt").read_text().splitlines() if l and not l.startswith("#")]
+    lines = (ROOT / service / "constraints.txt").read_text().splitlines()
+    pins = [line for line in lines if line and not line.startswith("#")]
     assert pins and all("==" in p for p in pins), "constraints must be exact pins"
     assert not any(p.lower().startswith("ai-surveillance") for p in pins), "the package itself must not be pinned"
     ignored = (ROOT / service / ".dockerignore").read_text().split()

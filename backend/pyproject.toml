@@ -25,6 +25,7 @@ dev = [
   "pytest>=8",
   "respx>=0.21",
   "pyyaml>=6",
+  "ruff>=0.15",
 ]
 
 [project.scripts]
@@ -37,6 +38,17 @@ include = ["ai_surveillance*"]
 # package, so they must be shipped explicitly.
 [tool.setuptools.package-data]
 ai_surveillance = ["migrations/script.py.mako", "migrations/versions/*.py"]
+
+# Lint for likely bugs (pyflakes, pycodestyle errors, bugbear), run in CI.
+# E501: long lines are a style matter here, not a CI failure.
+# B008: FastAPI's Depends()/Query() defaults are the framework's idiom.
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -68,7 +68,7 @@ def resolve_allowed(host: str, allowed: list, resolver: Callable[[str], list[str
         except OSError as exc:
             raise AddressNotAllowed(f"Host name {host!r} could not be resolved") from exc
         if not addresses:
-            raise AddressNotAllowed(f"Host name {host!r} has no addresses")
+            raise AddressNotAllowed(f"Host name {host!r} has no addresses") from None
     for ip in addresses:
         check_ip(ip, allowed)
     return addresses[0]

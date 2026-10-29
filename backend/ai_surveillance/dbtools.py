@@ -492,7 +492,7 @@ def restore(db_path: Path, source: Path, replace_unreadable: bool = False) -> di
                 # uncertain state is what the operator must hear about.
                 uncertain = exc.__context__
                 uncertain.add_note("interrupted (Ctrl-C) while cleaning up")
-                raise uncertain
+                raise uncertain  # noqa: B904 - re-raised as is; it already carries its own cause
             raise
     except BaseException as exc:
         for path in scratch_left:
