@@ -24,6 +24,7 @@ After Docker is installed (section 1):
 git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.git ~/ai-surveillance
 cd ~/ai-surveillance/deploy
 cp .env.example .env && chmod 600 .env
+sed -i "s/^INFERENCE_API_TOKEN=.*/INFERENCE_API_TOKEN=$(openssl rand -hex 32)/" .env   # api ↔ inference secret
 docker compose up -d --build                          # first run downloads images: several minutes
 docker compose ps                                     # frigate, api, inference, web, test-stream → running
 docker compose exec api ai-surveillance create-admin admin
@@ -70,9 +71,10 @@ git switch feat/initial-platform && git pull --ff-only
 cd ~/ai-surveillance/deploy
 cp .env.example .env
 chmod 600 .env
+sed -i "s/^INFERENCE_API_TOKEN=.*/INFERENCE_API_TOKEN=$(openssl rand -hex 32)/" .env
 nano .env
 ```
-The example works unchanged for a test on the same machine. It contains **no credentials**.
+The example works unchanged for a test on the same machine. It contains **no credentials**. The `sed` line generates this install's own `INFERENCE_API_TOKEN`: a shared secret that the api sends to the face-analysis service, so no other container on the internal network can use the detector. In an existing `.env`, add the line `INFERENCE_API_TOKEN=` first, run the `sed` command, then `docker compose up -d` (both containers are recreated with the new value). If it is left empty, everything still works, but the inference log warns that the detector is open to the internal network. If the two containers ever disagree, face analysis reports "inference unavailable … INFERENCE_API_TOKEN must be the same".
 
 | Variable | Default | Change when |
 |---|---|---|

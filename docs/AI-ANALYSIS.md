@@ -51,7 +51,7 @@ browser ── multipart POST /api/analysis/faces ──► web (Caddy, 12 MB bo
 
 | Service | Port | Exposure |
 |---|---|---|
-| `inference` | 8100 | Docker network only; **not published** on the host |
+| `inference` | 8100 | Docker network only; **not published** on the host. With `INFERENCE_API_TOKEN` set (SETUP.md §3), `/v1/detect` and `/v1/models` require the api's bearer token; `/health` stays open for the container health check |
 | `api` | 8000 | Docker network only; reached via `web` |
 | `web` (Caddy) | 80/443 | Host / LAN, the only published entry point |
 

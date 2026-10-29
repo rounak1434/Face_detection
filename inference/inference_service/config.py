@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     crop_jpeg_quality: int = Field(default=90, ge=50, le=100)
     # Faces whose shorter box side is below this are flagged "small" (still returned).
     small_face_px: int = Field(default=40, ge=1)
+    # Shared secret with the api (INFERENCE_API_TOKEN). When set, /v1/detect and
+    # /v1/models require "Authorization: Bearer <token>"; health stays open.
+    api_token: SecretStr | None = None
 
 
 @lru_cache

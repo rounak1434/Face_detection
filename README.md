@@ -37,6 +37,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 ```bash
 git clone -b feat/initial-platform https://github.com/rounak1434/Face_detection.git ~/ai-surveillance
 cd ~/ai-surveillance/deploy && cp .env.example .env && chmod 600 .env
+sed -i "s/^INFERENCE_API_TOKEN=.*/INFERENCE_API_TOKEN=$(openssl rand -hex 32)/" .env
 docker compose up -d --build
 docker compose exec api ai-surveillance create-admin admin
 bash doctor.sh                  # health check

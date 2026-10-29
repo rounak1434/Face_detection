@@ -55,6 +55,7 @@ services:
       DEVICE_ALLOWED_NETWORKS: ${DEVICE_ALLOWED_NETWORKS:-192.168.0.0/16,10.0.0.0/8}
       SYNTHETIC_RTSP_URL: rtsp://test-stream:8554/test
       INFERENCE_URL: http://inference:8100
+      INFERENCE_API_TOKEN: ${INFERENCE_API_TOKEN:-}
       ANALYSIS_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
       TZ: ${TZ:-UTC}
     # A named volume, so the non-root api user owns it (a bind mount would
@@ -77,6 +78,8 @@ services:
     restart: unless-stopped
     environment:
       INFERENCE_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
+      # Same value as the api's: only the api may call the detector.
+      INFERENCE_API_TOKEN: ${INFERENCE_API_TOKEN:-}
     # Upper bound if decoding or a model misbehaves. Sized for 2 concurrent
     # 40-megapixel images (~120 MB RGB each, plus copies and OpenCV buffers).
     # Raise INFERENCE_MEM_LIMIT in .env if larger models are added later.

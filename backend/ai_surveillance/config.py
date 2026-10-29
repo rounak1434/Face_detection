@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # Internal face-analysis service (inference container); never exposed.
     inference_url: str = "http://inference:8100"
     inference_timeout_seconds: float = 30.0
+    # Shared secret sent to the inference service (same INFERENCE_API_TOKEN
+    # on both containers); unset means the service is called without one.
+    inference_api_token: SecretStr | None = None
     analysis_max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     # Simultaneous analyses, counted from the start of the upload (memory and
     # CPU protection); more requests wait up to analysis_queue_timeout_seconds

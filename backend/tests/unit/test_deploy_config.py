@@ -102,6 +102,12 @@ def test_capture_storage_settings_reach_the_api(compose):
     assert example["CAPTURE_MIN_FREE_MB"] == "1024" and example["CAPTURE_RETENTION_DAYS"] == "0"
 
 
+def test_inference_token_reaches_both_services_and_has_no_example_value(compose):
+    for service in ("api", "inference"):
+        assert compose["services"][service]["environment"]["INFERENCE_API_TOKEN"] == "${INFERENCE_API_TOKEN:-}"
+    assert _env_example()["INFERENCE_API_TOKEN"] == "", "each install must generate its own token"
+
+
 def test_frigate_env_placeholders_are_provided(compose, frigate):
     text = (DEPLOY / "frigate" / "config.yml").read_text()
     used = set(re.findall(r"\{(FRIGATE_[A-Z_]+)\}", text))

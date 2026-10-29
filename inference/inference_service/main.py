@@ -7,8 +7,13 @@ nothing: images are analysed in memory and discarded.
     GET  /v1/health       same (kept for the api's health check)
     GET  /v1/models       registry: name, version, source, checksum, licence, status
     POST /v1/detect       body: raw image bytes (JPEG/PNG/WebP)
+
+With INFERENCE_API_TOKEN set, /v1/models and /v1/detect require
+"Authorization: Bearer <token>", so other containers on the network
+cannot use the detector.
 """
 
+import hmac
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -32,8 +37,23 @@ def _error(status: int, code: str, detail: str, **extra) -> JSONResponse:
     return JSONResponse({"error": code, "detail": detail, **extra}, status_code=status)
 
 
+def _token(settings: Settings) -> str | None:
+    value = settings.api_token.get_secret_value() if settings.api_token else ""
+    return value or None
+
+
 def create_app(settings: Settings | None = None, detector: FaceDetector | None = None) -> FastAPI:
     settings = settings or get_settings()
+
+    def authorized(request: Request) -> bool:
+        expected = _token(settings)
+        if expected is None:
+            return True
+        scheme, _, given = request.headers.get("authorization", "").partition(" ")
+        return scheme.lower() == "bearer" and hmac.compare_digest(given.encode(), expected.encode())
+
+    def unauthorized() -> JSONResponse:
+        return _error(401, "unauthorized", "Missing or invalid service token")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -56,6 +76,8 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
             # The path goes to the server log only, never into API responses.
             log.info("Model %s: %s%s (models directory: %s)", YUNET.name, status,
                      f" ({detail})" if detail else "", settings.models_dir)
+        if _token(settings) is None:
+            log.warning("INFERENCE_API_TOKEN is not set: any container on the internal network can call /v1/detect")
         yield
 
     app = FastAPI(title="AI Surveillance inference", version=__version__, lifespan=lifespan,
@@ -75,7 +97,9 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
     app.get("/v1/health")(health_payload)
 
     @app.get("/v1/models")
-    def models(request: Request) -> list[dict]:
+    def models(request: Request):
+        if not authorized(request):
+            return unauthorized()
         result = []
         for spec in MODELS.values():
             status, detail = request.app.state.status.get(spec.name, ("unknown", None))
@@ -94,6 +118,8 @@ def create_app(settings: Settings | None = None, detector: FaceDetector | None =
         max_faces: int | None = Query(default=None, ge=1, le=500),
         crops: bool = Query(default=True),
     ):
+        if not authorized(request):
+            return unauthorized()
         det: FaceDetector | None = request.app.state.detector
         if det is None:
             status, detail = request.app.state.status.get(YUNET.name, ("unknown", None))

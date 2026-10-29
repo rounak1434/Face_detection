@@ -4,6 +4,7 @@ import base64
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from inference_service.adapters.base import Box, DetectedFace
 from inference_service.config import Settings
@@ -57,6 +58,40 @@ def test_detect_returns_boxes_keypoints_and_crops(settings):
     assert first["quality"]["face_px"] == 80 and first["quality"]["small_face"] is False
     assert body["faces"][1]["crop"]["box"]["x"] == 2
     assert body["model"] == {"name": "fake", "version": "test"}
+
+
+TOKEN = "test-service-token-0123456789"
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}, {"Authorization": TOKEN},
+                                     {"Authorization": f"Basic {TOKEN}"}])
+def test_token_required_when_configured(settings, headers):
+    settings.api_token = SecretStr(TOKEN)
+    det = FakeDetector([_face(10, 10, 40, 40)])
+    with client_with(settings, det) as c:
+        detect = c.post("/v1/detect", content=fx.encode(fx.solid(), "PNG"), headers=headers)
+        models = c.get("/v1/models", headers=headers)
+    assert detect.status_code == models.status_code == 401
+    assert detect.json()["error"] == "unauthorized"
+    assert TOKEN not in detect.text and TOKEN not in models.text
+    assert det.calls == []  # refused before any work
+
+
+def test_correct_token_is_accepted_and_health_stays_open(settings):
+    settings.api_token = SecretStr(TOKEN)
+    with client_with(settings, FakeDetector([])) as c:
+        auth = {"Authorization": f"Bearer {TOKEN}"}
+        assert c.post("/v1/detect", content=fx.encode(fx.solid(), "PNG"), headers=auth).status_code == 200
+        assert c.get("/v1/models", headers=auth).status_code == 200
+        # The container health check has no token; it reveals readiness only.
+        assert c.get("/health").json()["ready"] is True
+        assert c.get("/v1/health").status_code == 200
+
+
+def test_no_token_configured_keeps_the_service_open(settings):
+    assert settings.api_token is None
+    with client_with(settings, FakeDetector([])) as c:
+        assert c.post("/v1/detect", content=fx.encode(fx.solid(), "PNG")).status_code == 200
 
 
 def test_no_face_is_a_normal_result(settings):
