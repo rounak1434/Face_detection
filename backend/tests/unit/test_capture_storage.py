@@ -148,3 +148,131 @@ def test_free_space_floor_zero_disables_the_check(signed_in, settings, monkeypat
 
 def test_free_bytes_reads_the_media_filesystem(tmp_path):
     assert MediaStore(tmp_path).free_bytes() > 0
+
+
+# --- Review of the storage protection: edge cases and races -------------------------------
+
+
+def _set_file_name(db: Database, capture_id: str, name: str) -> None:
+    with db.sessionmaker() as s:
+        s.get(Capture, capture_id).file_name = name
+        s.commit()
+
+
+@pytest.mark.parametrize("bad_name", ["../outside.jpg", "../../outside.jpg", "/etc/outside.jpg", "x.jpg"])
+def test_purge_never_touches_files_outside_the_capture_directory(storage, settings, bad_name):
+    db, store = storage
+    outside = settings.media_root / "outside.jpg"
+    outside.write_bytes(b"not ours")
+    old = _add(db, store, age_days=10)
+    real_file = store.path_for(old.file_name)
+    _set_file_name(db, old.id, bad_name)  # e.g. a tampered or legacy record
+    assert purge_old_captures(db.sessionmaker, store, days=7) == 1
+    assert outside.read_bytes() == b"not ours"
+    assert real_file.is_file()  # only the name in the record is ever used, and it was refused
+    assert old.id not in _ids(db)
+
+
+def test_delete_route_never_touches_files_outside_the_capture_directory(signed_in, settings):
+    outside = settings.media_root / "outside.jpg"
+    outside.write_bytes(b"not ours")
+    capture = signed_in.post("/api/cameras/entrance/snapshot").json()
+    db = Database(settings.database_url)
+    try:
+        _set_file_name(db, capture["id"], "../outside.jpg")
+        assert signed_in.delete(f"/api/captures/{capture['id']}").status_code == 204
+        assert outside.read_bytes() == b"not ours"
+        assert capture["id"] not in _ids(db)
+    finally:
+        db.engine.dispose()
+
+
+def test_purge_survives_a_capture_deleted_meanwhile_by_the_api(storage, monkeypatch):
+    """The Delete button and retention racing on the same capture."""
+    db, store = storage
+    first, second = _add(db, store, age_days=10), _add(db, store, age_days=10)
+    real_delete = MediaStore.delete
+
+    def delete_and_race(self, name):
+        real_delete(self, name)
+        if name == first.file_name:  # the API removes this record while retention works on it
+            with db.sessionmaker() as other:
+                other.delete(other.get(Capture, first.id))
+                other.commit()
+
+    monkeypatch.setattr(MediaStore, "delete", delete_and_race)
+    purge_old_captures(db.sessionmaker, store, days=7)
+    assert _ids(db) == set()
+    assert not store.path_for(second.file_name).exists()
+
+
+def test_purge_commits_each_capture_so_a_later_failure_keeps_earlier_work(storage, monkeypatch):
+    db, store = storage
+    a, b = _add(db, store, age_days=12), _add(db, store, age_days=11)
+    real_commit = type(db.sessionmaker()).commit
+    calls = {"n": 0}
+
+    def flaky_commit(self):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("database is locked")
+        return real_commit(self)
+
+    monkeypatch.setattr(type(db.sessionmaker()), "commit", flaky_commit)
+    with pytest.raises(RuntimeError):
+        purge_old_captures(db.sessionmaker, store, days=7)
+    monkeypatch.undo()
+    remaining = _ids(db)
+    assert len(remaining) == 1  # the first deletion was committed before the failure
+    # The record whose file was already removed is cleaned up by the next run.
+    assert purge_old_captures(db.sessionmaker, store, days=7) == 1
+    assert _ids(db) == set()
+    assert not any((store.captures_dir).iterdir())
+    assert {a.id, b.id} >= remaining
+
+
+def test_retention_check_repeats(settings, frigate, monkeypatch):
+    """The loop runs again after its interval (shortened here; the hourly timer itself is not exercised)."""
+    from ai_surveillance import captures as captures_module
+
+    monkeypatch.setattr(captures_module, "RETENTION_CHECK_SECONDS", 0.05)
+    settings.capture_retention_days = 1
+    db = Database(settings.database_url)
+    db.migrate()
+    store = MediaStore(settings.media_root)
+    try:
+        with TestClient(create_app(settings)) as client:
+            client.get("/api/health")
+            late = _add(db, store, age_days=5)  # appears after the startup run
+            for _ in range(100):
+                if late.id not in _ids(db):
+                    break
+                time.sleep(0.02)
+            assert late.id not in _ids(db)
+    finally:
+        db.engine.dispose()
+
+
+def test_unreadable_free_space_refuses_the_capture(signed_in, settings, monkeypatch):
+    settings.capture_min_free_mb = 1024
+
+    def broken(self):
+        raise OSError(5, "Input/output error", str(self.captures_dir))
+
+    monkeypatch.setattr(MediaStore, "free_bytes", broken)
+    resp = signed_in.post("/api/cameras/entrance/snapshot")
+    assert resp.status_code == 507
+    assert "could not be determined" in resp.json()["detail"]
+    assert str(settings.media_root) not in resp.json()["detail"]
+    assert signed_in.get("/api/captures").json() == []
+
+
+@pytest.mark.parametrize("field", ["capture_min_free_mb", "capture_retention_days"])
+def test_negative_storage_settings_are_rejected(tmp_path, field):
+    from pydantic import ValidationError
+
+    from ai_surveillance.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: -1})
+    assert getattr(Settings(_env_file=None), field) == (1024 if field == "capture_min_free_mb" else 0)

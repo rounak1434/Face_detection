@@ -10,6 +10,7 @@ import logging
 import time
 from datetime import timedelta
 
+from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .config import Settings
@@ -32,7 +33,15 @@ def check_free_space(store: MediaStore, settings: Settings) -> None:
     floor = settings.capture_min_free_mb
     if floor <= 0:
         return
-    free_mb = store.free_bytes() // _MB
+    try:
+        free_mb = store.free_bytes() // _MB
+    except OSError as exc:
+        # Fail closed: a capture written now would most likely fail too.
+        log.warning("Free disk space could not be determined: %s", exc)
+        raise InsufficientStorage(
+            f"Free disk space could not be determined ({exc.strerror or type(exc).__name__}); "
+            "captures are paused until it can be checked"
+        ) from exc
     if free_mb < floor:
         raise InsufficientStorage(
             f"Not enough free disk space for captures: {free_mb} MB free, at least {floor} MB is kept free "
@@ -160,23 +169,29 @@ def purge_old_captures(sessions: sessionmaker, store: MediaStore, days: int) -> 
 
     Pending clips are never touched. A file that cannot be removed keeps its
     record, so nothing is orphaned on disk; it is retried at the next check.
+    Each deletion is committed on its own, so a failure part-way leaves at
+    most one record whose file is already gone; the next run removes it.
     """
     cutoff = utcnow() - timedelta(days=days)
     removed = 0
     with sessions() as db:
-        rows = db.query(Capture).filter(Capture.status != "pending", Capture.created_at < cutoff).all()
-        for row in rows:
-            if row.file_name:
+        rows = db.query(Capture.id, Capture.file_name).filter(
+            Capture.status != "pending", Capture.created_at < cutoff
+        ).all()
+        for capture_id, file_name in rows:
+            if file_name:
                 try:
-                    store.delete(row.file_name)
+                    store.delete(file_name)
                 except ValueError:
                     pass  # not a name we generate: no file of ours to remove
                 except OSError as exc:
-                    log.warning("Retention: could not remove the file of capture %s: %s", row.id, exc)
+                    log.warning("Retention: could not remove the file of capture %s: %s", capture_id, exc)
                     continue
-            db.delete(row)
+            # A plain DELETE: a record already removed meanwhile (the Delete
+            # button) matches no row, which is fine. Pending is re-checked.
+            db.execute(delete(Capture).where(Capture.id == capture_id, Capture.status != "pending"))
+            db.commit()
             removed += 1
-        db.commit()
     return removed
 
 
