@@ -37,9 +37,12 @@ from . import devices as dev
 from .config import Settings
 from .credentials import REPAIR_HINT, CredentialCipher, CredentialError
 from .db import Device
-from .frigate_client import FrigateClient, FrigateConfigRejected, FrigateError
+from .frigate_client import FrigateClient, FrigateConfigRejected, FrigateError, FrigateUnreachable
 from .frigate_config import FrigateDevice, render_config, secret_name
 from .frigate_secrets import FrigateSecrets, SecretWriteError
+from .frigate_secrets import validate as validate_secrets
+
+SECRET_URL_RULE = "a single-line rtsp:// address of at most 2048 characters"
 
 log = logging.getLogger(__name__)
 
@@ -95,11 +98,15 @@ def build_plan(db: Session, cipher: CredentialCipher, template_text: str) -> App
             except CredentialError as exc:
                 log.warning("Apply to Frigate stopped: device %s: %s", d.id, exc)
                 raise ApplyError(409, f"{d.name}: {exc}. {REPAIR_HINT}. Nothing was changed in Frigate.") from None
-        for stream, path in (("main", d.main_path), ("sub", d.sub_path)):
-            if path:
-                url = dev.build_url(d.host, d.rtsp_port, path, d.username, password)
-                secrets[secret_name(d.id, stream)] = url
-                sensitive.append(url)
+        urls = {secret_name(d.id, stream): dev.build_url(d.host, d.rtsp_port, path, d.username, password)
+                for stream, path in (("main", d.main_path), ("sub", d.sub_path)) if path}
+        try:
+            validate_secrets(urls)  # what the secret writer would refuse, refused here before anything changes
+        except ValueError:
+            raise ApplyError(422, f"{d.name}: its stream address cannot be used ({SECRET_URL_RULE}). "
+                             "Edit the device and save it again. Nothing was changed in Frigate.") from None
+        secrets.update(urls)
+        sensitive.extend(urls.values())
         if password:
             sensitive.append(password)
 
@@ -114,8 +121,16 @@ def build_plan(db: Session, cipher: CredentialCipher, template_text: str) -> App
                      sorted(sensitive, key=len, reverse=True))
 
 
+def older_copy(path):
+    return path.with_name(path.name + ".1")
+
+
 def _keep_previous(path, text: str) -> None:
+    """Write Frigate's current config to `path`. A different earlier copy moves to `<path>.1`, so a retry
+    after a failed restore cannot overwrite the only copy of the config before it. At most two copies."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_text(encoding="utf-8", errors="replace") != text:
+        os.replace(path, older_copy(path))
     temp = path.with_name(path.name + ".tmp")
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
     try:
@@ -153,13 +168,19 @@ async def _verify(frigate: FrigateClient, config_text: str, expected: set[str]) 
         raise FrigateError(f"Frigate did not load the cameras {sorted(missing)}")
 
 
+async def _restart(frigate: FrigateClient, settings: Settings) -> None:
+    try:
+        await frigate.restart()
+    except FrigateUnreachable:
+        pass  # the answer is often lost while Frigate stops; wait_for_restart decides
+    await wait_for_restart(frigate, settings)
+
+
 async def _save_and_restart(frigate: FrigateClient, settings: Settings, text: str) -> None:
     try:
         await frigate.save_config(text, restart=True)
-    except FrigateConfigRejected:
-        raise
-    except FrigateError:
-        pass  # the response is often lost while Frigate restarts; the check afterwards decides
+    except FrigateUnreachable:
+        pass  # the answer is often lost while Frigate restarts; the check afterwards decides
     await wait_for_restart(frigate, settings)
 
 
@@ -172,8 +193,7 @@ async def _restore(frigate: FrigateClient, settings: Settings, secrets: FrigateS
     # Frigate's file is the new one: keep its secrets too (go2rtc needs them at the next start)
     # and restart to load the previous ones, which config/save needs to accept the old config.
     secrets.replace_all({**new_secrets, **previous_secrets})
-    await frigate.restart()
-    await wait_for_restart(frigate, settings)
+    await _restart(frigate, settings)
     await _save_and_restart(frigate, settings, previous_config)
     await _verify(frigate, previous_config, set())
     secrets.replace_all(previous_secrets)
@@ -187,14 +207,21 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
         raise ApplyError(502, f"{exc}. Nothing was changed.") from None
     try:
         _keep_previous(settings.frigate_previous_config_file, previous_config)
-        previous_secrets = secrets.read()
     except OSError as exc:
         raise ApplyError(500, f"Could not keep the previous configuration ({exc.strerror}). Nothing was changed.") from None
+    try:
+        previous_secrets = secrets.read()
+    except SecretWriteError as exc:
+        raise ApplyError(500, f"{exc}. Nothing was changed.") from None
 
     new_names = set(plan.secrets) - set(previous_secrets)
     try:
         # Old and new: the file on disk still refers to the previous secrets until the save.
         secrets.replace_all({**previous_secrets, **plan.secrets})
+    except ValueError:
+        # Checked before any write: an existing secret file holds something replace_all would not write.
+        raise ApplyError(500, "An existing Frigate secret file holds an unusable value; nothing was changed. "
+                         "See TROUBLESHOOTING.md, \"Apply to Frigate fails\".") from None
     except SecretWriteError as exc:
         try:
             secrets.replace_all(previous_secrets)
@@ -205,9 +232,8 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
     restarts = 0
     try:
         if new_names:
-            await frigate.restart()
             restarts += 1
-            await wait_for_restart(frigate, settings)
+            await _restart(frigate, settings)
         try:
             await _save_and_restart(frigate, settings, plan.config_text)
         except FrigateConfigRejected as exc:
@@ -226,8 +252,10 @@ async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, sec
         except (FrigateError, SecretWriteError) as exc:
             log.error("Restoring Frigate's previous configuration failed: %s", plan.redact(str(exc)))
             raise ApplyError(502, f"{reason}. Restoring the previous configuration also failed "
-                             f"({plan.redact(str(exc))}); it is kept in {settings.frigate_previous_config_file.name} "
-                             "in the api data directory.") from None
+                             f"({plan.redact(str(exc))}). The outcome is UNKNOWN: Frigate may run the new or the "
+                             "previous configuration once it is back; the secret files for both are kept so either "
+                             f"can start. The previous configuration is kept in {settings.frigate_previous_config_file.name} "
+                             "in the api data directory. Check Frigate before applying again.") from None
         raise ApplyError(502, f"{reason}. The previous configuration was restored.") from None
 
     try:

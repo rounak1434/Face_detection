@@ -139,6 +139,31 @@ Consistency of names and ports across compose, Dockerfiles, Frigate config and t
 | Start on boot / power recovery | Unverified (host) | SETUP.md §10 |
 | Alarm control through the CP Plus NVR | Not started | Not assumed. An RTSP stream does not imply alarm-output control. |
 
+## Audit of Apply to Frigate and rollback (Task A), 2026-10-29, base `ecb8596`
+Method: code review of `frigate_apply.py`, `frigate_secrets.py`, `frigate_client.py`, `routes/frigate.py`, the setup page and Compose, plus tests against the simulated Frigate (`test_frigate_apply.py`). **Simulated only: no real Frigate, Docker or go2rtc was involved.** "Test" names a test that pins the behaviour. D1–D5 are the defects found and fixed in this task; before the fix, the 7 new tests for them failed on `ecb8596` (fresh WSL clone), after it all pass.
+
+| # | Scenario | Behaviour now | Gap / fix |
+|---|---|---|---|
+| 1 | Password cannot be decrypted | 409 before any change, device named, repair hint (`test_damaged_password_stops_apply…`, 7 kinds) | Fixed in Task B (`ecb8596`) |
+| 2 | Template missing / malformed | 503 resp. 422 before any change, no path shown (`test_missing_template…`, `test_malformed_template…`) | None |
+| 3 | Secret-file preparation fails | Validation before any write; writes staged under names Frigate ignores; a failure puts the previous files back, 500 "Nothing was changed" (`test_a_failed_write…`, `test_unreadable_secrets_directory…`) | **D1:** listing or cleanup errors escaped `replace_all`/`read` as raw `OSError` (unhandled 500 that skipped the restore). Now `SecretWriteError` with the OS reason only. **D2:** a stored URL the writer refuses (only possible for a record that bypassed API validation) raised an unhandled `ValueError`; now checked while building the plan: 422 naming the device |
+| 4 | First restart fails or times out | Rollback; Frigate's file was never changed, so only the secret files are put back; if Frigate stays unreachable both sets stay | **D3:** a lost answer to `POST /api/restart` (Frigate stopping first, as the client documents) counted as a failure and rolled back; now only an HTTP error does, a lost answer is judged by waiting for the restart (`test_restart_answer_lost…`) |
+| 5 | `config/save` refuses | Frigate keeps its file; previous secret files back; 422 with Frigate's reason, passwords and URLs removed (`test_refused_config…`) | None |
+| 6 | Save accepted, answer lost | Judged by what Frigate runs afterwards (`test_lost_save_response…`) | **D3:** any HTTP error from `config/save` (e.g. 500) was also treated as "answer lost", then reported as "did not restart"; now reported as the HTTP error and rolled back (`test_save_http_error…`) |
+| 7 | Frigate does not come back after the save | Rollback attempted; if Frigate stays unreachable: 502 | **D4:** the message did not say that the final state is unknown; now "The outcome is UNKNOWN …; the secret files for both are kept", never success or "restored" (`test_frigate_not_coming_back…`) |
+| 8 | Expected camera missing | Previous secrets (plus the new ones until the old config runs), restart, previous config saved and checked, then unused secrets removed (`test_missing_camera…`, `test_restore_after_replacing…`) | None |
+| 9 | Old secret files cannot be restored | 502 "Restoring … also failed", outcome unknown | Covered by D1/D4 |
+| 10 | Old config cannot be restored (refused or Frigate down) | Same 502; secrets for both configs stay | None |
+| 11 | Frigate unreachable throughout rollback | Both secret sets stay, so go2rtc can start with either file; 502 outcome unknown | **D5:** applying again would overwrite the only copy of the config from before the failure. Now a different earlier copy moves to `frigate-config.previous.yml.1`; at most two copies (`test_retry_after_a_failed_restore…`) |
+| 12 | Second Apply while one runs | 409; lock check and acquire happen without an `await` in between, so they are atomic in the single event loop (`test_only_one_apply_at_a_time`) | Holds for one api process only: Compose runs uvicorn without `--workers`. Documented; more workers would need a file lock |
+| 13 | Device edited, switched off, deleted, or loses "connected" during an apply | The apply uses the snapshot read at its start, reports exactly which devices it applied, and the device routes never touch Frigate or the secret files. A change during the apply takes effect at the next apply | Accepted: consistent snapshot, no partial state. A deleted device's secret file is removed at the next successful apply |
+| 14 | Secret file missing at Frigate/go2rtc start | Previous plus new secrets whenever Frigate may start (since `33bca60`); the simulated go2rtc fails on a missing secret and every apply test asserts it never does | Real go2rtc behaviour unverified (host) |
+| 15 | Password, URL, path or request in messages or logs | Messages: OS reasons via `strerror` only, secret names but no values, Frigate messages passed through `redact` (URLs and passwords), file names without directories. Logs: device ids, reasons, redacted Frigate messages (`test_apply_logs_no_secret`, `test_damaged_password…`) | Frigate's own 400 text can include part of Frigate's traceback (Frigate container paths, truncated to 300 characters); shown to the signed-in admin only |
+
+Lifecycle: the previous config is kept in `frigate-config.previous.yml` plus at most one older `…previous.yml.1` (only when it differs), overwritten by later applies. Secret files: only managed names (`FRIGATE_DEV_<32 hex>_MAIN|SUB`); during an apply the previous and new sets coexist; after a success, or after a confirmed restore, only the set the running config uses remains; after an unconfirmed outcome both stay until the next successful apply. Temporary files are removed at every write.
+
+Results: backend Windows **444 passed, 6 skipped**; Linux (fresh clone of `ecb8596` + this change) **449 passed, 1 skipped**, apply tests 3/3 repeats; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

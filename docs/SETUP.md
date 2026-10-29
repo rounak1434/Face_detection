@@ -121,7 +121,8 @@ Detection runs on the **CPU** by default. The GPU is optional (section 8).
 **To show saved devices in Frigate:** on the **Camera & NVR Setup** page, test each device until it shows **Connected**, switch on **Use in Frigate**, then press **Apply to Frigate** and confirm.
 - Frigate restarts: **twice** when a device was added (Frigate reads secret files only when it starts, and it refuses a new stream whose secret it has not loaded), otherwise once. Live view and recording stop for about a minute per restart.
 - The `entrance` camera stays. A device switched on but no longer **Connected** (for example after editing it) is skipped and listed.
-- If Frigate refuses the configuration, or does not come back with the expected cameras, the previous configuration and secret files are restored automatically. The configuration from before the last apply is also kept in the api volume as `frigate-config.previous.yml`.
+- If Frigate refuses the configuration, or does not come back with the expected cameras, the previous configuration and secret files are restored automatically. The configuration from before the last apply is also kept in the api volume as `frigate-config.previous.yml` (and the one before that as `…previous.yml.1`; never more than these two). If Frigate cannot be reached even for the restore, the page says the outcome is unknown instead of reporting success.
+- Only one api process may run (Compose starts one); two at once could apply at the same time.
 - Each apply builds the whole configuration from the template, so it also brings template changes to Frigate. Changes made in Frigate's own UI are replaced by the next apply; make lasting changes in the template.
 
 **To start Frigate's live config over from the template:** `docker compose stop frigate`, then `sudo mv storage/frigate-config/config.yml storage/frigate-config/config.yml.old`, then `docker compose up -d`. Saved devices return at the next apply.

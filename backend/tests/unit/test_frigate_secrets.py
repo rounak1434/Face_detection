@@ -171,6 +171,26 @@ def test_a_failed_rename_cleans_up_and_reports_without_urls(secrets, monkeypatch
     assert _names(secrets) == [MAIN_A]
 
 
+def test_an_unreadable_directory_gives_secret_write_error_never_a_raw_os_error(secrets, monkeypatch):
+    """Listing fails (permissions, a vanished mount): no OSError may escape, and the path is not shown."""
+    secrets.replace_all({MAIN_A: URL_1})
+
+    def refuse(self):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(type(secrets.directory), "iterdir", refuse)
+    for call in (lambda: secrets.replace_all({MAIN_B: URL_3}), secrets.read):
+        with pytest.raises(SecretWriteError) as caught:
+            call()
+        assert "Permission denied" in str(caught.value) and str(secrets.directory) not in str(caught.value)
+
+
+def test_a_secret_file_that_is_not_utf8_cannot_be_read(secrets):
+    (secrets.directory / MAIN_A).write_bytes(b"rtsp://\xff\xfe")
+    with pytest.raises(SecretWriteError, match=f"{MAIN_A} is not valid UTF-8"):
+        secrets.read()
+
+
 def test_leftover_temporary_files_are_removed(secrets):
     (secrets.directory / f".tmp-{MAIN_A}").write_text(URL_1[:10])
     assert secrets.remove_leftovers() == 1

@@ -44,6 +44,9 @@ class FakeFrigate:
         self.reject_next_save: str | None = None
         self.never_back = False
         self.drop_save_response = False
+        self.drop_restart_response = False
+        self.save_error_status: int | None = None
+        self.stay_down_after_save = False
         self.drop_cameras: set[str] = set()
 
     # --- simulated process lifecycle
@@ -71,6 +74,8 @@ class FakeFrigate:
     def restart(self, request):
         self.events.append("restart")
         self.restarting = True
+        if self.drop_restart_response:
+            raise httpx.RemoteProtocolError("connection closed")  # Frigate stopped before answering
         return httpx.Response(200, json={"success": True, "message": "Restarting (this can take up to one minute)..."})
 
     # --- config API
@@ -89,6 +94,8 @@ class FakeFrigate:
         if self.restarting:
             raise httpx.ConnectError("down")
         self.events.append("save")
+        if self.save_error_status:
+            return httpx.Response(self.save_error_status, json={"success": False, "message": "Internal error"})
         new = request.content.decode()
         if self.reject_next_save:
             message, self.reject_next_save = self.reject_next_save, None
@@ -108,6 +115,8 @@ class FakeFrigate:
         self.file = new
         assert request.url.params["save_option"] == "restart"
         self.restarting = True
+        if self.stay_down_after_save:
+            self.never_back = True
         if self.drop_save_response:
             raise httpx.RemoteProtocolError("connection closed")
         return httpx.Response(200, json={"success": True, "message": "Config successfully saved, restarting..."})
@@ -322,10 +331,109 @@ def test_frigate_not_coming_back_reports_where_the_previous_config_is(signed_in,
     assert resp.status_code == 502
     detail = resp.json()["detail"]
     assert "did not come back" in detail and "Restoring the previous configuration also failed" in detail
+    assert "outcome is UNKNOWN" in detail  # D4: never reported as done or as restored
     assert "frigate-config.previous.yml" in detail and str(settings.frigate_previous_config_file.parent) not in detail
     assert settings.frigate_previous_config_file.read_text() == TEMPLATE_PATH.read_text()
     # Which file Frigate will start with is unknown, so the secrets for both stay: go2rtc can start either way.
     assert set(_secret_files(secrets_dir)) == {secret_name(device["id"], "main"), secret_name(device["id"], "sub")}
+
+
+def test_missing_template_changes_nothing(signed_in, settings, fake, secrets_dir, tmp_path):
+    _approved(signed_in, settings)
+    settings.frigate_config_template = tmp_path / "no-such-template.yml"
+    resp = _apply(signed_in)
+    assert resp.status_code == 503 and "Nothing was changed" in resp.json()["detail"]
+    assert "no-such-template" not in resp.json()["detail"]
+    assert fake.events == [] and _secret_files(secrets_dir) == {}
+
+
+@pytest.mark.parametrize("text", ["cameras: [unclosed", "go2rtc: {streams: {}}\n", "- just a list\n"])
+def test_malformed_template_changes_nothing(signed_in, settings, fake, secrets_dir, tmp_path, text):
+    _approved(signed_in, settings)
+    template = tmp_path / "bad-template.yml"
+    template.write_text(text)
+    settings.frigate_config_template = template
+    resp = _apply(signed_in)
+    assert resp.status_code == 422
+    assert resp.json()["detail"].startswith("Frigate configuration could not be built")
+    assert fake.events == [] and _secret_files(secrets_dir) == {}
+    assert fake.file == TEMPLATE_PATH.read_text()
+
+
+def test_restart_answer_lost_while_frigate_stops_is_not_a_failure(signed_in, settings, fake):
+    """D3: POST /api/restart often gets no answer because Frigate stops first; waiting decides."""
+    _approved(signed_in, settings)
+    fake.drop_restart_response = True
+    resp = _apply(signed_in)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["restarts"] == 2 and "gate_nvr" in yaml.safe_load(fake.file)["cameras"]
+
+
+def test_save_http_error_is_reported_as_such_and_rolled_back(signed_in, settings, fake, secrets_dir):
+    """D3: an HTTP error from config/save (not a lost answer) fails at once, not as 'did not restart'."""
+    _approved(signed_in, settings)
+    fake.save_error_status = 500
+    resp = _apply(signed_in)
+    assert resp.status_code == 502
+    detail = resp.json()["detail"]
+    assert "config/save returned HTTP 500" in detail and "previous configuration was restored" in detail
+    assert "did not restart" not in detail
+    assert fake.file == TEMPLATE_PATH.read_text() and _secret_files(secrets_dir) == {}
+    assert not [e for e in fake.events if e.startswith("go2rtc-failed")]
+
+
+def test_unusable_stored_stream_address_stops_apply_before_anything_changes(signed_in, settings, fake, secrets_dir):
+    """D2: a record that bypassed API validation (here a space in the path) gives 422, not a 500."""
+    device = _approved(signed_in, settings)
+    con = _db(settings)
+    con.execute("UPDATE devices SET main_path='/live stream' WHERE id=?", (device["id"],))
+    con.commit()
+    con.close()
+    resp = _apply(signed_in)
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail.startswith("Gate NVR: its stream address cannot be used") and "Nothing was changed" in detail
+    assert PASSWORD not in detail and "live stream" not in detail
+    assert fake.events == [] and _secret_files(secrets_dir) == {}
+
+
+def test_unreadable_secrets_directory_stops_apply_before_anything_changes(signed_in, settings, fake, monkeypatch):
+    """D1: no raw OSError: a clean 500 'Nothing was changed', no restart, no path in the message."""
+    from ai_surveillance import frigate_secrets
+
+    _approved(signed_in, settings)
+
+    def refuse(self):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(frigate_secrets.FrigateSecrets, "_managed_paths", refuse)
+    resp = _apply(signed_in)
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert "Permission denied" in detail and "Nothing was changed" in detail
+    assert str(settings.frigate_secrets_dir) not in detail
+    assert fake.events == [] and fake.file == TEMPLATE_PATH.read_text()
+
+
+def test_retry_after_a_failed_restore_keeps_the_config_from_before_the_failure(signed_in, settings, fake):
+    """D5: the kept copy is not lost when the operator applies again while Frigate runs an unconfirmed config."""
+    from ai_surveillance.frigate_apply import older_copy
+
+    _approved(signed_in, settings)
+    assert _apply(signed_in).status_code == 200
+    good_config = fake.file
+    _approved(signed_in, settings, name="Back Door", host="192.168.1.21")
+    fake.stay_down_after_save = True  # the new config is saved, then Frigate does not come back
+    resp = _apply(signed_in)
+    assert resp.status_code == 502 and "outcome is UNKNOWN" in resp.json()["detail"]
+    kept = settings.frigate_previous_config_file
+    assert kept.read_text() == good_config
+    fake.stay_down_after_save = fake.never_back = False
+    fake._start()  # Frigate comes back later, running the unconfirmed new config
+    assert fake.events[-1] == "started" and fake.file != good_config  # go2rtc could start: both secrets kept
+    assert _apply(signed_in).status_code == 200  # the operator applies again
+    assert older_copy(kept).read_text() == good_config  # still there after the retry
+    assert sorted(p.name for p in kept.parent.iterdir()) == [kept.name, older_copy(kept).name]  # bounded
 
 
 def test_frigate_unreachable_before_apply_changes_nothing(signed_in, settings, frigate, secrets_dir):

@@ -25,6 +25,10 @@ class FrigateNotFound(FrigateError):
     """Frigate answered 404 for the requested resource."""
 
 
+class FrigateUnreachable(FrigateError):
+    """No HTTP answer (connection refused, reset, timeout): Frigate may be down or restarting."""
+
+
 class FrigateConfigRejected(FrigateError):
     """Frigate refused a config in /api/config/save (HTTP 400); its config file is unchanged."""
 
@@ -100,7 +104,7 @@ class FrigateClient:
             try:
                 resp = await self._client.request(method, path, headers=headers, **kwargs)
             except httpx.HTTPError as exc:
-                raise FrigateError(f"Frigate request failed: {type(exc).__name__}") from exc
+                raise FrigateUnreachable(f"Frigate request failed: {type(exc).__name__}") from exc
             if resp.status_code == 401 and self.uses_auth and attempt == 0:
                 self._token = None  # expired; log in again once
                 continue
@@ -162,7 +166,7 @@ class FrigateClient:
 
         Frigate validates first; 400 means it refused the config and kept its
         file (FrigateConfigRejected). With restart, Frigate restarts itself
-        right after writing, so the response can be lost (FrigateError).
+        right after writing, so the response can be lost (FrigateUnreachable).
         """
         resp = await self._request(
             "POST", "/api/config/save",
@@ -177,7 +181,7 @@ class FrigateClient:
         return detail
 
     async def restart(self) -> None:
-        """POST /api/restart (admin role). The response can be lost while Frigate stops."""
+        """POST /api/restart (admin role). The response can be lost while Frigate stops (FrigateUnreachable)."""
         resp = await self._request("POST", "/api/restart")
         if resp.status_code != 200:
             detail = _message(resp)

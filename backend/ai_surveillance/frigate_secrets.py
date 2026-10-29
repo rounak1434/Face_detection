@@ -17,6 +17,7 @@ once, at startup. The api writes one file per device stream, named by
 does not come back after an apply.
 """
 
+import contextlib
 import os
 import re
 from collections.abc import Mapping
@@ -48,7 +49,12 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def _validate(values: Mapping[str, str]) -> None:
+def _reason(exc: OSError) -> str:
+    return exc.strerror or type(exc).__name__  # never the path or the content
+
+
+def validate(values: Mapping[str, str]) -> None:
+    """Raise ValueError (naming the secret, never the URL) for anything replace_all would refuse."""
     for name, url in values.items():
         if not isinstance(name, str) or not _MANAGED.match(name):
             raise ValueError("invalid secret name")
@@ -69,8 +75,17 @@ class FrigateSecrets:
         ]
 
     def read(self) -> dict[str, str]:
-        """The current device URLs, content stripped as Frigate does."""
-        return {path.name: path.read_text(encoding="utf-8").strip() for path in self._managed_paths()}
+        """The current device URLs, content stripped as Frigate does. Raises SecretWriteError if unreadable."""
+        values = {}
+        try:
+            for path in self._managed_paths():
+                try:
+                    values[path.name] = path.read_text(encoding="utf-8").strip()
+                except UnicodeDecodeError:
+                    raise SecretWriteError(f"{path.name} is not valid UTF-8") from None
+        except OSError as exc:
+            raise SecretWriteError(f"could not read the secret files: {_reason(exc)}") from None
+        return values
 
     def remove_leftovers(self) -> int:
         """Remove temporary files of an interrupted write."""
@@ -93,18 +108,25 @@ class FrigateSecrets:
         return temp
 
     def replace_all(self, values: Mapping[str, str]) -> None:
-        """Make the managed files exactly `values` ({secret name: URL})."""
-        _validate(values)
-        self.remove_leftovers()
+        """Make the managed files exactly `values` ({secret name: URL}).
+
+        Raises ValueError (before anything changes) or SecretWriteError; no OSError escapes.
+        """
+        validate(values)
+        try:
+            self.remove_leftovers()
+        except OSError as exc:
+            raise SecretWriteError(f"could not prepare the secret files: {_reason(exc)}") from None
         staged: list[tuple[Path, Path]] = []
         try:
             for name, url in values.items():
                 staged.append((self._write_temp(name, url), self.directory / name))
         except OSError as exc:
-            for temp, _ in staged:
-                temp.unlink(missing_ok=True)
-            (self.directory / f"{_TEMP_PREFIX}{name}").unlink(missing_ok=True)
-            raise SecretWriteError(f"could not write {name}: {exc.strerror or type(exc).__name__}") from None
+            with contextlib.suppress(OSError):
+                for temp, _ in staged:
+                    temp.unlink(missing_ok=True)
+                (self.directory / f"{_TEMP_PREFIX}{name}").unlink(missing_ok=True)
+            raise SecretWriteError(f"could not write {name}: {_reason(exc)}") from None
 
         try:
             for temp, path in staged:
@@ -113,7 +135,8 @@ class FrigateSecrets:
                 if path.name not in values:
                     path.unlink(missing_ok=True)
         except OSError as exc:
-            self.remove_leftovers()
-            raise SecretWriteError(f"could not update the secret files: {exc.strerror or type(exc).__name__}") from None
+            with contextlib.suppress(OSError):
+                self.remove_leftovers()
+            raise SecretWriteError(f"could not update the secret files: {_reason(exc)}") from None
         finally:
             _fsync_dir(self.directory)
