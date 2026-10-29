@@ -388,13 +388,19 @@ def test_delete_requires_sign_in(client, signed_in):
     assert client.delete(f"/api/captures/{capture['id']}").status_code == 401
 
 
-def test_delete_refused_while_clip_is_pending(signed_in, frigate):
+def test_delete_refused_while_clip_is_pending(signed_in, frigate, settings):
+    # Keep the clip pending for the whole test. With the fixture's 5 s timeout
+    # and a zero poll interval, a slow CI runner timed the export out first
+    # (the clip became "failed" and was then correctly deletable).
+    settings.clip_export_timeout_seconds = 600
+    settings.clip_poll_interval_seconds = 0.05
     _queue_export(frigate)
     frigate.get("/api/jobs/export/entrance_abc").respond(200, json={"status": "running"})
     capture = signed_in.post("/api/cameras/entrance/clip", json={}).json()
+    assert signed_in.get(f"/api/captures/{capture['id']}").json()["status"] == "pending"
     resp = signed_in.delete(f"/api/captures/{capture['id']}")
     assert resp.status_code == 409
-    assert signed_in.get(f"/api/captures/{capture['id']}").status_code == 200
+    assert signed_in.get(f"/api/captures/{capture['id']}").json()["status"] == "pending"
 
 
 def test_delete_keeps_the_record_when_the_file_cannot_be_removed(signed_in, settings, monkeypatch):

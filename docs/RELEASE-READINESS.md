@@ -29,7 +29,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | Start after reboot | Done (docs only) | `restart: unless-stopped` + systemd unit; Blocked: not run on the host. |
 | Desktop launcher | Not in scope | This product is a web app served by Docker; there is no desktop launcher in this repository. |
 | Packaging: Docker images, model download at build | Done (static checks only) | Dockerfiles, pinned `constraints.txt`; never built (no Docker here). |
-| Static analysis / CI | Done; green on GitHub at `4b59718`, but an intermittent backend test failure on GitHub runners (2 of 6 runs) is not yet identified; failures are now reported as annotations | `.github/workflows/ci.yml`: backend, inference (with the real model) and frontend jobs; `ruff` (pyflakes, pycodestyle errors, bugbear) for both Python packages; `tsc` in the frontend build. No Python type checker yet. |
+| Static analysis / CI | Done; the intermittent failure on GitHub runners was a timing-dependent test (`test_delete_refused_while_clip_is_pending`), fixed; failures are reported as annotations | `.github/workflows/ci.yml`: backend, inference (with the real model) and frontend jobs; `ruff` (pyflakes, pycodestyle errors, bugbear) for both Python packages; `tsc` in the frontend build. No Python type checker yet. |
 
 ## Backlog (ranked)
 | # | Priority | Task | Acceptance criteria | Files | Tests |
