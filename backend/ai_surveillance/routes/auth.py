@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import AdminUser
-from ..deps import AppState, current_user, get_db, get_state
+from ..deps import AppState, client_key, current_user, get_db, get_state
 from ..security import SESSION_COOKIE, authenticate, create_session, revoke_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -14,10 +14,6 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
-def _client_key(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
-
-
 @router.post("/login")
 def login(
     body: LoginRequest,
@@ -26,7 +22,7 @@ def login(
     db: Session = Depends(get_db),
     state: AppState = Depends(get_state),
 ) -> dict:
-    key = _client_key(request)
+    key = client_key(request)
     if state.throttle.is_locked(key):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed attempts. Try again later.")
     user = authenticate(db, body.username, body.password)

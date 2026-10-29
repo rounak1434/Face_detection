@@ -44,6 +44,7 @@
 
 - **AI analysis:** `POST /api/analysis/faces` takes a multipart upload, checks its size, structure and magic bytes, and forwards the image bytes to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints, crops and quality hints. Nothing is stored: uploads are parsed in memory, with no temporary files. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
 - **Face events:** a background loop in the api polls Frigate's finished person events, takes each event's best frame (from the recording when possible), runs the face detector in the inference service and stores one face event per Frigate event, with frame and crops only when faces were found. `GET /api/face-events` and its image routes serve the history behind sign-in. Detection only, no identification. Details in [FACE-EVENTS.md](FACE-EVENTS.md).
+- **Gallery:** `/api/people` holds authorized people with a consent record. `POST /api/people/<id>/faces` takes an uploaded image only, runs the face detector through the inference service and accepts it only with exactly one usable face; the image is stored AES-256-GCM encrypted under `media/gallery/`. Deleting a person needs the password again; changes go to `/api/audit-log`. No matching yet (Phase 6). Details in [GALLERY.md](GALLERY.md).
 - **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`).
   - A database created before migrations existed is checked column by column against `0001_baseline`. Only an exact match is backed up and stamped; anything else stops startup unchanged.
   - Any existing SQLite file is backed up before a schema change.
@@ -58,6 +59,7 @@
 | Camera credentials | Kept only in `deploy/.env` (gitignored, chmod 600) and passed only to the Frigate container. API responses never include stream URLs. Probe output masks `user:pass@`. |
 | Transport | HTTPS via Caddy's local CA. HSTS, CSP, no framing. |
 | Camera/NVR setup | Passwords are write-only and AES-256-GCM encrypted. Tests run only for saved devices. The SSRF guard allows private networks only, and the probe connects to the checked IP. Details in [CAMERA-SETUP.md](CAMERA-SETUP.md). |
+| Biometric data | Reference images only from administrator uploads with a consent record, encrypted at rest with the credentials key, served only to signed-in users without caching; deleting a person needs the password again and is audited. Face-event frames and crops expire after `FACE_EVENT_RETENTION_DAYS`. |
 | Uploaded and saved files | No client-chosen paths. Strict file-name pattern. Resolved path must stay inside the media directory. |
 | Data residency | No cloud calls at runtime. Model downloads (later milestones) are one-time and documented. |
 

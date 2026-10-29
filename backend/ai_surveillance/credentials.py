@@ -1,8 +1,9 @@
-"""Encryption of stored camera/NVR passwords (AES-256-GCM).
+"""Encryption at rest (AES-256-GCM): camera/NVR passwords and gallery reference images.
 
 The key comes from CREDENTIALS_KEY or, if unset, from a key file created on
 first start with owner-only permissions. Losing the key means re-entering
-device passwords; it does not affect anything else.
+device passwords and enrolling every authorized person's reference images
+again; back it up together with the database.
 """
 
 import base64
@@ -18,6 +19,7 @@ from .config import Settings
 _NONCE_BYTES = 12
 _TAG_BYTES = 16  # AES-GCM authentication tag, appended to the ciphertext
 _PREFIX = "v1:"  # format version, so the scheme can change later
+_BLOB_MAGIC = b"AISENC1\x00"  # same role for encrypted files
 
 # Operator-facing reasons. They never contain the stored value. AES-GCM cannot
 # tell a changed key from a damaged value (both fail the authentication tag).
@@ -84,3 +86,20 @@ class CredentialCipher:
             return plaintext.decode()
         except UnicodeDecodeError:
             raise CredentialError(DAMAGED) from None
+
+    def encrypt_bytes(self, data: bytes, context: str) -> bytes:
+        """Binary form for files: magic, nonce, ciphertext and tag. `context` is bound as associated data."""
+        nonce = secrets.token_bytes(_NONCE_BYTES)
+        return _BLOB_MAGIC + nonce + self._aead.encrypt(nonce, data, context.encode())
+
+    def decrypt_bytes(self, blob: bytes, context: str) -> bytes:
+        """Every failure is a CredentialError (UNKNOWN_FORMAT, DAMAGED or KEY_OR_DAMAGED)."""
+        if not blob.startswith(_BLOB_MAGIC):
+            raise CredentialError(UNKNOWN_FORMAT)
+        raw = blob[len(_BLOB_MAGIC):]
+        if len(raw) < _NONCE_BYTES + _TAG_BYTES:
+            raise CredentialError(DAMAGED)
+        try:
+            return self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], context.encode())
+        except InvalidTag:
+            raise CredentialError(KEY_OR_DAMAGED) from None

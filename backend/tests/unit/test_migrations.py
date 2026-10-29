@@ -298,6 +298,26 @@ def test_cli_db_commands(db_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["state"] == "at head"
 
 
+def test_gallery_revision_downgrades_alone_and_keeps_face_events(db):
+    db.migrate()
+    with db.engine.begin() as conn:
+        conn.execute(text("INSERT INTO face_events (id, frigate_event_id, camera, started_at, ended_at, status, "
+                          "face_count, created_at) VALUES ('e1', '1.0-abc', 'entrance', '2026-10-29 12:00:00', "
+                          "'2026-10-29 12:00:05', 'no_faces_detected', 0, '2026-10-29 12:00:06')"))
+        conn.execute(text("INSERT INTO people (id, display_name, consent_date, consent_note, created_by, "
+                          "created_at, updated_at) VALUES ('p1', 'X', '2026-10-01', 'form', 'admin', "
+                          "'2026-10-01 00:00:00', '2026-10-01 00:00:00')"))
+    assert inspect(db.engine).get_columns("people")[5]["name"] == "active"
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT active FROM people")).scalar() == 1  # server default: active
+    command.downgrade(alembic_config(db.engine), "0003_face_events")
+    tables = set(inspect(db.engine).get_table_names())
+    assert not tables & {"people", "reference_faces", "audit_log"} and "face_events" in tables
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT id FROM face_events")).all() == [("e1",)]
+    assert db.migrate() == "upgraded"
+
+
 def test_downgrade_and_upgrade_round_trip(db):
     db.migrate()
     cfg = alembic_config(db.engine)

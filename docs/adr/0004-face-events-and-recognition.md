@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10. Decisions 3–5 in section 7 are still open.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11. The policy decisions (section 7, item 5) were taken on 2026-10-30.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -128,7 +128,7 @@ There is deliberately **no** endpoint that enrolls from an event or crop.
 2. **Identity test images**: at least two different people, several images each, public-domain or with written consent, for matching tests and threshold checks. Until then Phase 6 can test only "same image, transformed" versus "no match", which proves the plumbing, not accuracy.
 3. **SFace download** at image build (38.7 MB, pinned checksum); the inference image grows accordingly.
 4. **Real stack** (Docker, Frigate, the Linux AI PC) for Phase 10; no Docker on this PC.
-5. **Policy decisions**: encryption at rest of biometric data; password re-confirmation; retention default; who may be enrolled and how consent is recorded.
+5. **Policy decisions** (owner's decisions, 2026-10-30): reference images (and later embeddings) **encrypted at rest** with the existing AES-256-GCM key; **password re-confirmation** for deleting a person and for switching recognition; consent recorded as a **date plus a note** on where the evidence is kept (no document upload); gallery data **kept until deleted**.
 6. Camera resolution at the door (§4) decides whether recognition is feasible at all; measured in Phase 2/10.
 
 ## 8. Phase 2: face detection on Frigate person events (done, 2026-10-29)
@@ -152,3 +152,15 @@ Evidence: `test_face_events.py` (19, mocked Frigate and inference, real SQLite a
 
 ## 10. Phase 4: face event API (done, 2026-10-29)
 `backend/ai_surveillance/routes/face_events.py`; contract in [FACE-EVENTS.md](../FACE-EVENTS.md#api). Differences from section 5's table: the list filter is `status` (detection statuses) plus `has_faces`, because recognition outcomes and `person_id` do not exist until Phase 6; the crop route is nested, `/api/face-events/{id}/detections/{detection_id}/crop`, so a crop is reachable only through its own event; the list answers `{items, next_cursor}` with an opaque keyset cursor on (start time, id). Ids are checked against the server's 32-hex format before any lookup; images are served only from `media/faces` through the media store's name and path checks. Evidence: `test_face_events_api.py` (17).
+
+## 11. Phase 5: gallery and enrollment (done, 2026-10-30)
+`gallery.py`, `routes/people.py`, `routes/audit.py`, migration `0004_gallery`; operator description and contract in [GALLERY.md](../GALLERY.md). Differences from section 5's draft, deliberately:
+- `reference_faces` has no `embedding` or `model_version` yet: they are added with SFace in Phase 6, so nothing pretends to be recognition before it exists. The original upload is kept (encrypted), so embeddings can be computed from it later without asking for the image again.
+- Consent is `consent_date` (a date) plus a required `consent_note`, per the policy decision; `notes` and `created_by` were added.
+- Encryption: `CredentialCipher.encrypt_bytes` (AES-256-GCM, the device-password key, fresh 12-byte nonce, associated data `reference_face:<id>`), files `<uuid>.enc` under `media/gallery`. The same key now protects two kinds of data, so losing it means re-entering device passwords **and** re-enrolling everyone.
+- Exactly-one-face is decided with a lower counting floor (`GALLERY_OTHER_FACE_SCORE` 0.5) than the acceptance score (`GALLERY_MIN_SCORE` 0.9), so a weak second face still refuses the image; the quality gate also needs 80 px and a face clear of the edge. With the real YuNet the public-domain fixture's 76 px face is refused at the default and accepted at 60 px.
+- Password re-confirmation shares the sign-in lockout and answers 403 (not 401) so the session is not dropped; failures are audited. It covers deleting a person now and will cover the recognition switch in Phase 6. Removing one reference image needs a session only.
+- `audit_log` has no foreign keys and stores ids and field names only, so it survives deletions without keeping names or consent text.
+- "Unlinks past matches" (section 5's delete row) has nothing to unlink until Phase 6 adds match results.
+- No route enrolls from an event: checked by a test over the OpenAPI schema (the only write routes under `/api/people` and `/api/face-events` are create person, update person and upload a face) and by a JSON body with a face event id being refused (415).
+Evidence: `test_gallery_api.py` (40 in-process tests with a mocked detector, 1 with the real YuNet in WSL), `test_migrations.py` (0004 downgrades alone and keeps face events).

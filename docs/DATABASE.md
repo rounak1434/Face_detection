@@ -20,6 +20,7 @@ Later revisions:
 |---|---|---|
 | `0002_device_use_in_frigate` | `devices.use_in_frigate` (boolean, not null, default false): the operator's "Use in Frigate" approval (ADR-0003). Existing devices start switched off. | Drops the column; device rows are kept |
 | `0003_face_events` | Tables `face_events` (one row per Frigate person event: unique `frigate_event_id`, camera, start/end, status, face count, frame source/time/file/size, detector, detail) and `face_detections` (box, detection score, keypoints and quality as JSON, crop file; deleted with their event). See [FACE-EVENTS.md](FACE-EVENTS.md). | Drops both tables; the image files under `media/faces/` stay on disk and must be removed by hand if wanted |
+| `0004_gallery` | Tables `people` (display name, notes, consent date and note, active, created by/at, updated at), `reference_faces` (encrypted image file, media type, image size, face box, detection score, keypoints and quality as JSON, detector, created by/at; deleted with their person) and `audit_log` (time, username, action, target type and id, detail; no foreign keys, so entries outlive what they describe). See [GALLERY.md](GALLERY.md). | Drops the three tables; the encrypted files under `media/gallery/` stay on disk and must be removed by hand if wanted |
 
 SQLite runs with `journal_mode=WAL`, `busy_timeout=5000` ms and `foreign_keys=ON`.
 
@@ -29,7 +30,8 @@ Inside the api container the volume is mounted at `/data`.
 |---|---|
 | `/data/app.db` | The database |
 | `/data/app.db-wal`, `/data/app.db-shm` | SQLite WAL-mode companions. They exist while the api runs, or after an unclean stop. **Never delete them while anything uses the database:** they can hold committed data. |
-| `/data/credentials.key` | Encrypts the stored camera/NVR passwords |
+| `/data/credentials.key` | Encrypts the stored camera/NVR passwords and the gallery's reference images |
+| `/data/media/gallery/` | Encrypted reference images ([GALLERY.md](GALLERY.md)). **Not included in `db backup`:** copy it together with the database and the key |
 | `/data/app.db.pre-<rev>-<time>.bak` | Automatic copy taken before each migration |
 | `/data/app.db.manual-<time>.bak` | Copies you make with `ai-surveillance db backup` |
 | `/data/pre-restore-<time>/` | An independent copy of the previous database made by a restore, plus any leftover side files of an unreadable one |
@@ -213,7 +215,7 @@ This recovery path is covered by the killed-process test, which restores the `pr
    docker compose exec api ai-surveillance db verify /data/app.db
    ```
    Sign in to the website, then check the cameras and the Camera & NVR Setup page.
-5. **Credentials key:** restore `credentials.key` only if it was lost or replaced. Without the matching key, stored device passwords cannot be decrypted; re-enter them on the Setup page.
+5. **Credentials key:** restore `credentials.key` only if it was lost or replaced. Without the matching key, stored device passwords cannot be decrypted (re-enter them on the Setup page) and gallery reference images cannot be decrypted (enroll them again).
    ```bash
    docker compose cp backups/credentials.key api:/data/credentials.key
    ```

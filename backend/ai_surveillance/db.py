@@ -2,10 +2,11 @@
 
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, false
+from sqlalchemy import (Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, false,
+                        true)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -126,6 +127,60 @@ class FaceDetection(Base):
     keypoints: Mapped[str] = mapped_column(Text)  # JSON, 5 [x, y] pairs
     quality: Mapped[str] = mapped_column(Text)  # JSON: face_px, small_face, touches_edge, sharpness
     crop_file: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class Person(Base):
+    """An authorized person in the gallery, created by an administrator with a consent record (ADR-0004)."""
+
+    __tablename__ = "people"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    display_name: Mapped[str] = mapped_column(String(100))
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    consent_date: Mapped[date] = mapped_column(Date)  # when the person gave consent
+    consent_note: Mapped[str] = mapped_column(String(500))  # where the consent evidence is kept
+    # Inactive people stay in the gallery but are never matched (Phase 6).
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReferenceFace(Base):
+    """An uploaded reference image with exactly one face. The image file is AES-256-GCM encrypted."""
+
+    __tablename__ = "reference_faces"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), index=True)
+    image_file: Mapped[str] = mapped_column(String(64))  # <uuid>.enc under media/gallery
+    media_type: Mapped[str] = mapped_column(String(16))  # image/jpeg | image/png | image/webp
+    image_width: Mapped[int] = mapped_column(Integer)
+    image_height: Mapped[int] = mapped_column(Integer)
+    box_x: Mapped[int] = mapped_column(Integer)
+    box_y: Mapped[int] = mapped_column(Integer)
+    box_w: Mapped[int] = mapped_column(Integer)
+    box_h: Mapped[int] = mapped_column(Integer)
+    score: Mapped[float] = mapped_column(Float)  # detection confidence, not identity
+    keypoints: Mapped[str] = mapped_column(Text)  # JSON, 5 [x, y] pairs
+    quality: Mapped[str] = mapped_column(Text)  # JSON from the detector
+    detector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditEntry(Base):
+    """Who did what to the gallery (and later the recognition switch). Ids only: no names, notes or images."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    username: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(48))
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 def make_engine(database_url: str) -> Engine:

@@ -165,7 +165,7 @@ docker compose exec api ai-surveillance create-admin admin
    - Choose a photo you are allowed to use, then click **Detect faces**. You should see boxes, 5 keypoints per face and face crops, labelled "Real model inference".
    - Nothing you upload is stored. See [AI-ANALYSIS.md](AI-ANALYSIS.md).
 
-**Back up the credentials key.** It encrypts the passwords stored for real devices:
+**Back up the credentials key.** It encrypts the passwords stored for real devices and the gallery's reference images ([GALLERY.md](GALLERY.md)):
 ```bash
 docker compose cp api:/data/credentials.key ./credentials.key.backup && chmod 600 credentials.key.backup
 ```

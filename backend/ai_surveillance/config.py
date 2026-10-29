@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # Face events (rows, frames, crops) older than this many days are deleted hourly; 0 keeps them.
     face_event_retention_days: int = Field(default=30, ge=0)
 
+    # Gallery enrollment (ADR-0004, Phase 5): an uploaded reference image must contain exactly one
+    # face. Every face the detector finds at or above gallery_other_face_score counts; the one face
+    # must then reach gallery_min_score, be at least gallery_min_face_px wide and high, and not touch
+    # the image edge. Starting points, not measured thresholds.
+    gallery_min_score: float = Field(default=0.9, ge=0.0, le=1.0)
+    gallery_other_face_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    gallery_min_face_px: int = Field(default=80, ge=1)
+    gallery_max_faces_per_person: int = Field(default=10, ge=1, le=100)
+
     session_ttl_hours: int = 12
     # Set to false only for plain-HTTP local development.
     cookie_secure: bool = True
