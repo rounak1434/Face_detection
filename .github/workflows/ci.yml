@@ -33,7 +33,12 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Unit tests
-        run: python -m pytest -p no:cacheprovider -m "not integration" -rs
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -m "not integration" -rsfE 2>&1 | tee pytest.log
+      - name: Report failing tests as annotations (readable without opening the log)
+        if: failure()
+        run: grep -E '^(FAILED|ERROR) ' pytest.log | head -20 | sed 's/%/%25/g; s/^/::error title=pytest::/' || true
 
   inference:
     runs-on: ubuntu-24.04
@@ -55,7 +60,12 @@ jobs:
       - name: Download and verify the model (size and SHA-256)
         run: python -m inference_service.download --models-dir models
       - name: Tests (including the real model)
-        run: python -m pytest -p no:cacheprovider -rs
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -rsfE 2>&1 | tee pytest.log
+      - name: Report failing tests as annotations (readable without opening the log)
+        if: failure()
+        run: grep -E '^(FAILED|ERROR) ' pytest.log | head -20 | sed 's/%/%25/g; s/^/::error title=pytest::/' || true
 
   frontend:
     runs-on: ubuntu-24.04
