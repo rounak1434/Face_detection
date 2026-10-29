@@ -276,6 +276,87 @@ def test_startup_removes_partial_files_left_by_an_interrupted_capture(settings, 
     assert sorted(p.name for p in captures.iterdir()) == sorted([kept.name, other.name])
 
 
+def _wait_until(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_frigate_export_is_deleted_once_the_clip_is_stored(signed_in, frigate):
+    _ready_export(frigate)
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "ready"
+    route = frigate.routes["delete_exports"]
+    assert _wait_until(lambda: route.called)
+    assert json.loads(route.calls.last.request.content) == {"ids": ["entrance_abc"]}
+    assert signed_in.get(capture["file_url"]).content == MP4  # our copy is intact
+
+
+@pytest.mark.parametrize("status,body", [
+    (400, {"success": False, "message": "Can not delete in-progress export."}),
+    (403, {"success": False, "message": "Forbidden"}),
+    (500, {"detail": "boom"}),
+])
+def test_failed_frigate_export_cleanup_keeps_the_clip(signed_in, frigate, status, body):
+    _ready_export(frigate)
+    frigate.routes["delete_exports"].respond(status, json=body)
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert _wait_until(lambda: frigate.routes["delete_exports"].called)
+    assert signed_in.get(f"/api/captures/{capture['id']}").json()["status"] == "ready"
+    assert signed_in.get(capture["file_url"]).content == MP4
+
+
+def test_frigate_export_kept_when_configured(signed_in, frigate, settings):
+    settings.clip_keep_frigate_export = True
+    _ready_export(frigate)
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "ready"
+    time.sleep(0.1)
+    assert not frigate.routes["delete_exports"].called
+
+
+def test_frigate_export_of_a_failed_clip_is_cleaned_up(signed_in, frigate):
+    _queue_export(frigate)
+    frigate.get("/api/jobs/export/entrance_abc").respond(200, json={"status": "success"})
+    frigate.get("/api/exports/entrance_abc").respond(200, json=EXPORT_ROW)
+    frigate.get("/exports/entrance_abc.mp4").respond(403)  # download fails after Frigate exported
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "failed"
+    assert _wait_until(lambda: frigate.routes["delete_exports"].called)
+
+
+def test_no_cleanup_when_frigate_never_created_an_export(signed_in, frigate):
+    frigate.post(url__regex=r"/api/export/.*").respond(400, json={"success": False, "message": "No recordings found"})
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "failed"
+    time.sleep(0.1)
+    assert not frigate.routes["delete_exports"].called
+
+
+def test_deleting_a_clip_also_removes_its_frigate_export(signed_in, frigate, settings):
+    settings.clip_keep_frigate_export = True  # e.g. an older clip whose export was kept
+    _ready_export(frigate)
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    settings.clip_keep_frigate_export = False
+    assert signed_in.delete(f"/api/captures/{capture['id']}").status_code == 204
+    route = frigate.routes["delete_exports"]
+    assert _wait_until(lambda: route.called)
+    assert json.loads(route.calls.last.request.content) == {"ids": ["entrance_abc"]}
+
+
+def test_deleting_a_clip_succeeds_when_frigate_is_unreachable(signed_in, frigate, settings):
+    settings.clip_keep_frigate_export = True
+    _ready_export(frigate)
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    settings.clip_keep_frigate_export = False
+    frigate.routes["delete_exports"].side_effect = httpx.ConnectError("refused")
+    assert signed_in.delete(f"/api/captures/{capture['id']}").status_code == 204
+    assert signed_in.get(f"/api/captures/{capture['id']}").status_code == 404
+
+
 def test_delete_snapshot_removes_row_and_file(signed_in, settings):
     capture = signed_in.post("/api/cameras/entrance/snapshot").json()
     stored = settings.media_root / "captures" / f"{capture['id']}.jpg"

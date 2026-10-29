@@ -185,6 +185,18 @@ class FrigateClient:
         except FrigateNotFound:
             return None
 
+    async def delete_export(self, export_id: str) -> None:
+        """Delete an export (video, thumbnail, row) in Frigate; an unknown id counts as deleted.
+
+        Frigate 0.18.2 has no single-export DELETE; it offers POST /api/exports/delete
+        {"ids": [...]} (admin role): 200, 404 if an id is unknown, 400 while ffmpeg
+        still writes the file. Raises FrigateError otherwise.
+        """
+        try:
+            await self._json("POST", "/api/exports/delete", json={"ids": [export_id]})
+        except FrigateNotFound:
+            return
+
     @asynccontextmanager
     async def stream_export_file(self, video_path: str) -> AsyncIterator[httpx.Response]:
         # Frigate reports exports as /media/frigate/exports/<file>.mp4; its

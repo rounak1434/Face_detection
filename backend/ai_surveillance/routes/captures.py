@@ -7,7 +7,14 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..captures import InsufficientStorage, check_free_space, create_clip_request, run_clip_export, take_snapshot
+from ..captures import (
+    InsufficientStorage,
+    check_free_space,
+    create_clip_request,
+    discard_frigate_export,
+    run_clip_export,
+    take_snapshot,
+)
 from ..db import Capture, as_utc
 from ..deps import AppState, current_user, get_db, get_state, known_camera
 
@@ -89,7 +96,7 @@ def get_capture(capture_id: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.delete("/captures/{capture_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_capture(capture_id: str, db: Session = Depends(get_db), state: AppState = Depends(get_state)) -> None:
+async def delete_capture(capture_id: str, db: Session = Depends(get_db), state: AppState = Depends(get_state)) -> None:
     capture = db.get(Capture, capture_id)
     if capture is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Capture not found")
@@ -109,9 +116,14 @@ def delete_capture(capture_id: str, db: Session = Depends(get_db), state: AppSta
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 f"Could not delete the file: {exc.strerror or type(exc).__name__}",
             ) from exc
+    export_id = capture.frigate_export_id
     db.delete(capture)
     db.commit()
     log.info("Capture %s deleted", capture_id)
+    if export_id and not state.settings.clip_keep_frigate_export:
+        # Clips stored before Frigate exports were cleaned up, or whose cleanup
+        # failed. In the background: Frigate being down must not block this.
+        state.spawn(discard_frigate_export(state.frigate, export_id))
 
 
 @router.get("/captures/{capture_id}/file")

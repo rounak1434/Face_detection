@@ -102,6 +102,11 @@ def test_capture_storage_settings_reach_the_api(compose):
     assert example["CAPTURE_MIN_FREE_MB"] == "1024" and example["CAPTURE_RETENTION_DAYS"] == "0"
 
 
+def test_frigate_export_cleanup_setting_reaches_the_api(compose):
+    assert compose["services"]["api"]["environment"]["CLIP_KEEP_FRIGATE_EXPORT"] == "${CLIP_KEEP_FRIGATE_EXPORT:-false}"
+    assert _env_example()["CLIP_KEEP_FRIGATE_EXPORT"] == "false"
+
+
 def test_inference_token_reaches_both_services_and_has_no_example_value(compose):
     for service in ("api", "inference"):
         assert compose["services"][service]["environment"]["INFERENCE_API_TOKEN"] == "${INFERENCE_API_TOKEN:-}"

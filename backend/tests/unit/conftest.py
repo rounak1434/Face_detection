@@ -68,6 +68,10 @@ def frigate():
         mock.get("/api/entrance/latest.jpg", name="latest").respond(
             200, content=JPEG, headers={"content-type": "image/jpeg"}
         )
+        # Frigate 0.18.2: POST /api/exports/delete {"ids": [...]} (frigate/api/export.py)
+        mock.post("/api/exports/delete", name="delete_exports").respond(
+            200, json={"success": True, "message": "Successfully deleted 1 export(s)."}
+        )
         yield mock
 
 

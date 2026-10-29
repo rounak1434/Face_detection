@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     clip_settle_seconds: float = 12.0
     clip_export_timeout_seconds: float = 180.0
     clip_poll_interval_seconds: float = 2.0
+    # Each clip is exported by Frigate and then copied here. By default the
+    # Frigate export is deleted afterwards, so the clip does not take disk
+    # space twice; true keeps it on Frigate's Exports page as well.
+    clip_keep_frigate_export: bool = False
 
     # Captures share the data volume with the database. New captures are
     # refused while less than this much space is free there (0 disables).

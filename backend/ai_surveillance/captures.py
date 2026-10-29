@@ -119,6 +119,7 @@ async def run_clip_export(
         camera, seconds = capture.camera, capture.duration_seconds or settings.clip_default_seconds
 
     error: str | None = None
+    export_id: str | None = None
     file_name = f"{capture_id}.mp4"
     try:
         await asyncio.sleep(settings.clip_settle_seconds)
@@ -155,13 +156,28 @@ async def run_clip_export(
 
     with sessions() as db:
         row = db.get(Capture, capture_id)
-        if row is None:
-            return
-        if error is None:
-            row.status, row.file_name, row.size_bytes = "ready", file_name, size
-        else:
-            row.status, row.error = "failed", error
-        db.commit()
+        if row is not None:
+            if error is None:
+                row.status, row.file_name, row.size_bytes = "ready", file_name, size
+            else:
+                row.status, row.error = "failed", error
+            db.commit()
+
+    # Our copy is stored (or the clip failed): Frigate's export would only
+    # take the same disk space a second time.
+    if export_id and not settings.clip_keep_frigate_export:
+        await discard_frigate_export(frigate, export_id)
+
+
+async def discard_frigate_export(frigate: FrigateClient, export_id: str) -> None:
+    """Best effort: a failure is logged and never affects the capture."""
+    try:
+        await frigate.delete_export(export_id)
+        log.info("Deleted Frigate export %s", export_id)
+    except FrigateError as exc:
+        log.warning("Frigate export %s was not deleted (it stays on Frigate's Exports page): %s", export_id, exc)
+    except Exception:
+        log.exception("Deleting Frigate export %s failed unexpectedly", export_id)
 
 
 def purge_old_captures(sessions: sessionmaker, store: MediaStore, days: int) -> int:
