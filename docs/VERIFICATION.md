@@ -302,6 +302,20 @@ Scope: everything added for faces (Phases 2–7) plus the parts it relies on (si
 
 Backend: Windows **595 passed, 10 skipped**; Linux (fresh clone of `c13adb6` + this change) **601 passed, 4 skipped**, real-model tests **5 passed**, review, recognition and face-event tests 3/3 repeats; inference 64 + 4 real SFace passed; `ruff` clean.
 
+## Face integration, Phase 9: release preparation on Windows and Linux, 2026-10-30, base `cbda309`
+| Kind | Evidence | Result |
+|---|---|---|
+| Backend (unit, in-process, mocked Frigate and inference) | Windows 11, Python 3.12.10: `pytest -m "not integration"`; Linux (WSL 2, Ubuntu, Python 3.14.4, fresh clone of `cbda309` + this change) | Windows **599 passed, 10 skipped**; Linux **605 passed, 4 skipped**; `ruff` clean on both |
+| Real models in the backend | Linux throwaway venv with the inference package and both verified models: the 5 `real_*` tests (YuNet event detection, YuNet enrollment gate, SFace end to end, …) | 5 passed |
+| Repeats | Linux: recognition, privacy review, gallery, face events and face-event API suites 3 times | 118 passed ×3 |
+| Inference service | `pytest` with YuNet and SFace downloaded and SHA-256 checked | **64 passed, 1 skipped** on both (the skip is the optional `FACE_FIXTURE`) |
+| Frontend | vitest, `tsc` and the production build | Windows **60 passed**, build OK; Linux: CI's Ubuntu job (no Node in WSL here) |
+| Static Compose | No container engine on either machine (`docker`, `podman`, `docker-compose`, `nerdctl` all absent). `compose.yaml` alone and merged with `compose.nvidia.yaml`, interpolated from `.env.example` only, validated against the Compose Specification JSON schema (same file as Task D, SHA-256 prefix `d549057ebc2925f3`), plus reference checks (depends_on targets and conditions, named volumes, bind sources, same Frigate image for `frigate-init`) | 0 schema errors, 0 problems, no required variable missing; the negative controls still produce errors (misspelled key 1, bad condition 2, numeric volume 2) |
+| Deploy config | `test_deploy_config.py`: the recognition thresholds and `GALLERY_MIN_FACE_PX` reach the api, and the Compose default, the `.env.example` value and the code default are the same number | passed |
+| Real Docker / Frigate / camera | none | **not run (Phase 10, Blocked)** |
+
+Release-preparation changes: `RECOGNITION_ACCEPT_THRESHOLD`, `RECOGNITION_REJECT_THRESHOLD`, `RECOGNITION_MIN_FACE_PX` and `GALLERY_MIN_FACE_PX` are now set in `deploy/.env` (so they can be calibrated on site without a rebuild); `.env.example` no longer says that nobody is identified; README, SETUP (sections 4 and 6), TROUBLESHOOTING (new face section) describe the face features.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

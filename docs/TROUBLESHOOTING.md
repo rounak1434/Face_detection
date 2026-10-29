@@ -113,6 +113,17 @@ How it works: SETUP.md section 4a and [ADR-0003](adr/0003-saved-devices-to-friga
 - **Frigate's log says "Invalid substitution found"** at startup: go2rtc found a `{FRIGATE_*}` name with no secret file or variable. Apply keeps the secret files of the previous and the new configuration until it has finished, so this points to a hand-edited config or a removed volume: apply again, or start over from the template (SETUP.md section 4a).
 - **"An apply to Frigate is already running"**: wait for it to finish (a few minutes at most).
 
+## Face events, People and recognition
+How it works: [FACE-EVENTS.md](FACE-EVENTS.md), [GALLERY.md](GALLERY.md), [RECOGNITION.md](RECOGNITION.md).
+- **No face events appear**: they come only from Frigate **person** events that have ended. Check that Frigate detects people (its UI, or `docker compose logs frigate`) and that `FACE_EVENTS_ENABLED=true`. The api log says "Face events paused: …" with the reason (Frigate unreachable, detector unavailable, low disk) and "Face events resumed" when it recovers.
+- **Many events say "No face detected"**: faces are too small or turned away in the frame. `FACE_FRAME_SOURCE=recording` (default) uses the main stream, which has larger faces than the snapshot.
+- **"Embedder: Not ready (missing)" or "Switch recognition on" is greyed out**: the SFace model is not loaded in the inference container. Rebuild it (`docker compose build inference && docker compose up -d`); the build downloads and checks the model. `docker compose logs inference` shows each model's status.
+- **"Recognition was not switched on: No active person has a usable reference image"**: add a reference image to an active person first. If images exist but show "Not yet embedded", the embedder could not process them; see the api log ("cannot be embedded").
+- **A reference image is refused** ("No face", "More than one face", "not usable as a reference"): use a clear photo with exactly one face, at least 80 px, not touching the edge. The reasons are listed under the upload button.
+- **"The reference image cannot be decrypted"** or **"Unreadable: N embeddings"**: the credentials key changed (a new `api-data` volume, a changed `CREDENTIALS_KEY`). Restore the previous key (DATABASE.md), or delete those images and enroll them again.
+- **"Password is incorrect" when deleting a person or switching recognition**: it is your sign-in password. Five wrong tries lock both sign-in and these actions for 5 minutes.
+- **Someone is "Inconclusive" or "Unrecognized" although enrolled**: add more reference images of them (different light, angle), and measure the thresholds at the door before changing `RECOGNITION_*` in `.env`.
+
 ## Sign-in problems
 - **"Too many failed attempts"**: wait 5 minutes.
 - **Forgotten password**: `docker compose exec api ai-surveillance create-admin <username>` resets it.

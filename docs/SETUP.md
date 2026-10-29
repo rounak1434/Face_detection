@@ -101,7 +101,7 @@ Never commit `deploy/.env`. It is gitignored.
 | Database schema status | `docker compose exec api ai-surveillance db status` |
 | Delete **all** data | `docker compose down -v && sudo rm -rf storage`. This deletes recordings, captures, accounts and the credentials key. |
 
-The first start downloads the Frigate, mediamtx, Python, Node and Caddy images. It then builds the api, inference and web images. Building the inference image also downloads the YuNet face model (about 230 KB) from OpenCV Zoo and verifies its SHA-256. A mismatch stops the build. Frigate needs another minute or two to come up. To watch it:
+The first start downloads the Frigate, mediamtx, Python, Node and Caddy images. It then builds the api, inference and web images. Building the inference image also downloads two face models from OpenCV Zoo and verifies their SHA-256: YuNet for detection (about 230 KB) and SFace for recognition (about 39 MB). A mismatch stops the build. Frigate needs another minute or two to come up. To watch it:
 ```bash
 docker compose logs -f frigate
 ```
@@ -164,11 +164,19 @@ docker compose exec api ai-surveillance create-admin admin
    - Models shows **yunet: Ready**.
    - Choose a photo you are allowed to use, then click **Detect faces**. You should see boxes, 5 keypoints per face and face crops, labelled "Real model inference".
    - Nothing you upload is stored. See [AI-ANALYSIS.md](AI-ANALYSIS.md).
+6. **Face events tab:** with only the test pattern it stays at "No face events yet": Frigate creates face events from **person** events, and the pattern contains no person. With a real camera, people walking past appear here within about a minute of leaving the picture. See [FACE-EVENTS.md](FACE-EVENTS.md).
+7. **People tab:**
+   - The **Face recognition** panel shows **Off** and **Embedder: Ready (sface 2021dec)**.
+   - Add a person **who has consented** (name, consent date, where the consent evidence is kept), then **Add reference image** with a clear photo of that person, one face, at least 80 px. It should show **Ready to match**.
+   - Only when you want matching: **Switch recognition on** and enter your password. Faces in new face events are then compared with the active people. Before relying on the results, check the thresholds with consenting people at the real door ([RECOGNITION.md](RECOGNITION.md)); they are set in `.env` (`RECOGNITION_*`) and take effect after `docker compose up -d`.
+
+**Privacy on this host.** Face-event frames are plain JPEGs and deleted files are not overwritten on disk: install Ubuntu with full-disk encryption (LUKS) if you can. Frigate keeps its own event snapshots (14 days) and recordings (3 days). See the known limits in [VERIFICATION.md](VERIFICATION.md) (Phase 8).
 
 **Back up the credentials key.** It encrypts the passwords stored for real devices and the gallery's reference images ([GALLERY.md](GALLERY.md)):
 ```bash
 docker compose cp api:/data/credentials.key ./credentials.key.backup && chmod 600 credentials.key.backup
 ```
+Database backups (`ai-surveillance db backup`, [DATABASE.md](DATABASE.md)) do not include the encrypted reference images in `/data/media/gallery`; copy that folder together with the database and the key.
 
 **Frigate's own UI**, for administrators only, is at https://127.0.0.1:8971 on this machine only. From another PC, use `ssh -L 8971:127.0.0.1:8971 <user>@<host>`. Frigate prints its first admin password once:
 ```bash

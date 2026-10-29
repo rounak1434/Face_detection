@@ -1,10 +1,10 @@
 # AI Surveillance Web Application
 
-A locally hosted web application for monitoring your own IP cameras. It shows live video in the browser and saves snapshots and short clips on request. Later milestones add face recognition against an administrator-managed registry, event history and verified alarm output.
+A locally hosted web application for monitoring your own IP cameras. It shows live video in the browser, saves snapshots and short clips on request, records faces seen in camera person events, and can compare them with an administrator-managed list of authorized, consenting people. Event alerts and verified alarm output come in later milestones.
 
 All processing and evidence storage stay on your own hardware. Nothing is sent to cloud services.
 
-> **Status: milestone 1 (foundation).** See [docs/VERIFICATION.md](docs/VERIFICATION.md) for what has been tested and where. It also lists what is still unverified on real hardware.
+> **Status: milestone 1 plus face events and recognition (ADR-0004 Phases 1–9), tested with simulated Frigate, real face models and public-domain photos; not yet run on the Ubuntu host, the real camera or Docker.** See [docs/VERIFICATION.md](docs/VERIFICATION.md) for what has been tested and where, and [docs/RELEASE-READINESS.md](docs/RELEASE-READINESS.md) for what is still open.
 
 ## What milestone 1 does
 - Administrator sign-in, with argon2id password hashing and an httpOnly session cookie.
@@ -23,6 +23,12 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 
   See [docs/CAMERA-SETUP.md](docs/CAMERA-SETUP.md).
 
+## Faces (ADR-0004)
+- **Face events:** each finished Frigate person event is checked once for faces; frames and crops are kept 30 days by default. Page: **Face events**. See [docs/FACE-EVENTS.md](docs/FACE-EVENTS.md).
+- **Authorized people:** an administrator adds people with a consent record and uploads reference images (exactly one face each; never taken from camera footage). Images and embeddings are encrypted at rest. Page: **People**. See [docs/GALLERY.md](docs/GALLERY.md).
+- **Recognition (off by default):** compares faces with the authorized people using SFace (Apache-2.0) and records `AUTHORIZED`, `UNRECOGNIZED`, `INCONCLUSIVE`, `SYSTEM_ERROR` or `NOT_MATCHED`. Switching it needs the password again. A match is not proof of identity, there is no liveness check, and the thresholds must be measured on your camera. See [docs/RECOGNITION.md](docs/RECOGNITION.md).
+- Local law on biometric data (for example India's DPDP Act 2023) may require notice, consent and purpose limits; the product records consent but does not decide legality.
+
 ## Layout
 | Path | What |
 |---|---|
@@ -30,7 +36,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 | `inference/` | Internal face-analysis service (FastAPI, OpenCV). Package `inference_service`. |
 | `frontend/` | Web UI (React + TypeScript + Vite). |
 | `deploy/` | Docker Compose stack: Frigate, api, web (Caddy HTTPS) and an optional test stream. Also holds the systemd unit. |
-| `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), the Frigate API contract (`FRIGATE-API.md`), AI analysis (`AI-ANALYSIS.md`) and database migrations and backups (`DATABASE.md`). |
+| `docs/` | Architecture, setup, troubleshooting, verification record, decision records (ADRs), the Frigate API contract (`FRIGATE-API.md`), AI analysis (`AI-ANALYSIS.md`), face events, gallery and recognition (`FACE-EVENTS.md`, `GALLERY.md`, `RECOGNITION.md`), release readiness and database migrations and backups (`DATABASE.md`). |
 
 ## Quick start
 **Ubuntu 22.04/24.04 with Docker**, using the synthetic test stream. No camera is needed. Full guide: [docs/SETUP.md](docs/SETUP.md).

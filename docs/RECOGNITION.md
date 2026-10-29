@@ -44,7 +44,7 @@ Four photos of three people is a sanity check, not an accuracy measurement. Acce
 - Deleting a person removes their images and embeddings and **unlinks past matches**: those faces stay `AUTHORIZED` with their similarity (it was true at the time), but no longer name anyone.
 
 ## Settings
-Not passed by Compose yet; the defaults apply. Set them in the api's environment if needed. The reject threshold must be below the accept threshold, or the api refuses to start.
+In `deploy/.env` (passed to the api by Compose; `docker compose up -d` applies a change). The reject threshold must be below the accept threshold, or the api refuses to start.
 | Variable | Default |
 |---|---|
 | `RECOGNITION_ACCEPT_THRESHOLD` | `0.45` |

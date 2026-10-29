@@ -39,7 +39,7 @@ curl -k -b cookies.txt -F file=@reference.jpg https://localhost/api/people/<id>/
 ```
 
 ## Settings
-Not passed by Compose yet; the defaults apply. Set them in the api's environment if needed.
+`GALLERY_MIN_FACE_PX` is in `deploy/.env` and passed by Compose; the others are not passed by Compose (the defaults apply; set them in the api's environment if needed).
 | Variable | Default | Effect |
 |---|---|---|
 | `GALLERY_MIN_SCORE` | `0.9` | Detection score the one face must reach |

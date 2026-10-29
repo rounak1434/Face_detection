@@ -122,6 +122,19 @@ def test_face_event_settings_reach_the_api_with_the_documented_defaults(compose)
     assert env["FACE_FRAME_SOURCE"] == "${FACE_FRAME_SOURCE:-recording}" and example["FACE_FRAME_SOURCE"] == "recording"
 
 
+@pytest.mark.parametrize("name", ["RECOGNITION_ACCEPT_THRESHOLD", "RECOGNITION_REJECT_THRESHOLD",
+                                  "RECOGNITION_MIN_FACE_PX", "GALLERY_MIN_FACE_PX"])
+def test_recognition_settings_reach_the_api_with_the_code_defaults(compose, name):
+    """Compose default, .env.example value and the code's default are the same number."""
+    from ai_surveillance.config import Settings
+
+    code_default = Settings.model_fields[name.lower()].default
+    env = compose["services"]["api"]["environment"][name]
+    match = re.fullmatch(r"\$\{" + name + r":-([0-9.]+)\}", env)
+    assert match, env
+    assert float(match.group(1)) == float(_env_example()[name]) == float(code_default)
+
+
 def test_frigate_export_cleanup_setting_reaches_the_api(compose):
     assert compose["services"]["api"]["environment"]["CLIP_KEEP_FRIGATE_EXPORT"] == "${CLIP_KEEP_FRIGATE_EXPORT:-false}"
     assert _env_example()["CLIP_KEEP_FRIGATE_EXPORT"] == "false"
