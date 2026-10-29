@@ -203,6 +203,15 @@ Manual review for contradictions: Frigate waits for `frigate-init` (`service_com
 
 New static tests in `test_deploy_config.py` (run in CI): `test_service_references_agree`, `test_nvidia_override_only_adjusts_existing_services`. Backend: Windows **447 passed, 7 skipped**; Linux (fresh clone of `ff5e853` + this change) **453 passed, 1 skipped**; `ruff` clean.
 
+## Final local verification (Task F), 2026-10-29, base `02c5ab8`
+Windows 11, Python 3.12.10, Node 24; WSL Ubuntu 26.04.1, Python 3.14.4. Commands (run in each package directory):
+- `python -m pytest -m "not integration" -q -p no:cacheprovider` (backend): Windows **447 passed, 7 skipped**; Linux fresh clone **453 passed, 1 skipped** (Task D run).
+- `ruff check .`: clean (backend, inference).
+- `python -m pytest -q` (inference, Windows; code unchanged in these tasks): **54 passed, 1 skipped**.
+- `npx vitest run`, `npx tsc -b`, `npm run build` (frontend, Windows): **47 passed**, tsc clean, build OK. Not run on Linux (no Node in WSL); CI runs it on Linux.
+- Repeats for flakiness: `test_frigate_apply.py` + `test_frigate_secrets.py` 5× on Windows (59 passed, 4 skipped each time) and 3× on Linux per task: no flaky result.
+Unit and simulated tests only. **No real Docker, Frigate, go2rtc, camera, NVR or GPU test was run in these tasks** (Task E is blocked: no Docker on this PC, the Linux AI PC is unavailable).
+
 ## To fill in on the Ubuntu host
 ```
 Date:

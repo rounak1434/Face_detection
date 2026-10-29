@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `9c343c5`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `02c5ab8`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -45,10 +45,31 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | 9 | Feature (M2) | Recognition engine evaluation, then enrollment with consent, matching (`AUTHORIZED`/`UNRECOGNIZED`/`INCONCLUSIVE`/`SYSTEM_ERROR`) | Per ADR-0001; needs a decision and test footage | new modules, migrations | large; plan separately |
 | 10 | Feature (M3/M4) | Events with MQTT, attribute estimates, alerts and alarm output | Per ARCHITECTURE milestones; alarm only after hardware verification | new | plan separately |
 
+## Frigate integration hardening, 2026-10-29
+| Task | Result | Commit |
+|---|---|---|
+| B: damaged stored passwords | 3 kinds crashed with HTTP 500; now 409 with a repair hint everywhere, nothing changed | `ecb8596` |
+| A: audit of Apply and rollback (15 scenarios) | 5 defects fixed (raw OS errors, unusable stored URL, lost restart answer vs HTTP error, unknown outcome not stated, kept copy overwritten on retry); table in VERIFICATION.md | `2d98ff2` |
+| C: secret handling review | URL-encoded password survived redaction of cut-off Frigate messages (fixed); removal of a device used in Frigate now says it stays until the next apply | `ff5e853` |
+| D: static Compose validation | No Docker available; both combinations valid against the Compose schema, cross-reference tests added | `02c5ab8` |
+| E: real Frigate stack | **Not started: Blocked** (no Docker here, Linux AI PC unavailable). Checklist: SETUP section 6 step 4 and the host list below | — |
+
+Test evidence by kind (do not mix them up):
+| Kind | What exists | Count (2026-10-29) |
+|---|---|---|
+| Unit tests | Backend, inference, frontend | backend 447 passed / 7 skipped (Windows), 453 / 1 (Linux); inference 54 / 1; frontend 47 |
+| Simulated integration | `test_frigate_apply.py` against a fake Frigate that copies the 0.18.2 behaviour read in its source; respx-mocked Frigate elsewhere | part of the backend count |
+| Static Compose validation | `test_deploy_config.py` (CI) and a one-off schema check | 29 tests; 0 schema errors |
+| Real Docker / Frigate / go2rtc | none | 0 |
+| Real camera / NVR / GPU | none (only the YuNet model on a public-domain photo) | 0 |
+
 ## Hardware- and host-dependent checks (Blocked)
 - Build all images; `docker compose config` and `up` on Ubuntu; `doctor.sh`; `run-integration-tests.sh`.
 - Frigate accepts the config; test stream; live view, snapshot and clip through the real stack.
-- `frigate-init` seeds the live config and prepares the secrets volume; one "Apply to Frigate" with the synthetic source (two restarts, camera listed), then one that removes it.
+- `docker compose config --quiet` for `compose.yaml` and with `compose.nvidia.yaml` (never print `.env`).
+- `frigate-init` exits 0, seeds the live config only when absent, and the secrets volume is uid 10001, mode 0700.
+- One "Apply to Frigate" with the synthetic source (two restarts, camera listed, no credentials in the tracked template, the live config or logs), then one that removes it, then replacing one device with another; record restart times.
+- In a test environment only: a refused config and Frigate stopped during an apply; the kept copies stay at two at most and stale secret files disappear after a successful apply.
 - CP Plus NVR main/sub streams (models not yet recorded); GTX 1650 detection; start on boot and power recovery.
 
 ## Deployment blockers
