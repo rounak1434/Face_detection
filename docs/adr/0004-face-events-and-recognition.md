@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11; Phase 6 (recognition and switch) done, see section 12. The policy decisions (section 7, item 5) were taken on 2026-10-30.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11; Phase 6 (recognition and switch) done, see section 12; Phase 7 (frontend) done, see section 13. The policy decisions (section 7, item 5) were taken on 2026-10-30.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -176,3 +176,12 @@ Evidence: `test_gallery_api.py` (40 in-process tests with a mocked detector, 1 w
 - The switch is `app_settings.recognition_enabled`, read at the start of each poll; switching needs the password (decision 4); switching on embeds pending references first and is refused without a ready embedder or a usable gallery.
 - Migration safety: SQLite foreign keys stay enforced during migrations, so rebuilding a parent table (`face_events`) would cascade-delete its detections. Only the child table `face_detections` is rebuilt; downgrade drops the other columns with native `DROP COLUMN`. Tested with data both ways.
 Evidence: `inference/tests/test_api.py` (6 new `/v1/embed` contract tests), `inference/tests/test_model_sface.py` (4, real SFace), `backend/tests/unit/test_recognition.py` (29 mocked plus 1 end-to-end with real YuNet and SFace: enroll Armstrong 1964 through the API, switch on, ingest three Frigate events: Armstrong 1969 `AUTHORIZED` 0.617, Aldrin 0.178 and Collins 0.118 `UNRECOGNIZED`).
+
+## 13. Phase 7: frontend (done, 2026-10-30)
+`frontend/src/components/faces/`: `FaceEventsPage` (route `/events`), `PeoplePage` with `RecognitionPanel`, `PasswordDialog` and the audit log (route `/people`), shared wording in `labels.ts`; API calls and types in `api.ts`. Decisions:
+- Every outcome and recognition state has its own label and colour, with a tooltip saying what it means; a match on a deleted person reads "Authorized: deleted person"; rows from before recognition read "No result".
+- Destructive actions are confirmed: deleting an event or a reference image asks first; deleting a person and switching recognition either way open a password dialog (403 and 429 explained in it). A 409 refusal of switching on closes the dialog and says why (embedder not ready, no usable gallery). The switch button is disabled while the embedder is not ready.
+- Enrollment shows the server's rejection reasons one per line; file type and size are checked in the browser first. There is no control that sends a face event or crop to the gallery.
+- Images are plain `<img>` requests to the signed-in routes (same-origin cookie); nothing is cached by the app.
+- Found while checking in a real browser: the consent date defaulted to the UTC date and also capped the date picker, so before 05:30 in India today's date could not be chosen; it now uses the local date. The audit log's 32-character ids widened the page on a phone; table cells now wrap.
+Evidence: `frontend/src/test/faces-pages.test.tsx` (13), and a manual run of the real api, the real inference service (YuNet + SFace) and the Vite dev server with a throwaway database.

@@ -2,7 +2,7 @@
 
 Recognition compares faces in Frigate person events with the reference faces of the **authorized people** in the gallery ([GALLERY.md](GALLERY.md)). It is **off by default**. Design and phase plan: [ADR-0004](adr/0004-face-events-and-recognition.md).
 
-Status: implemented (Phase 6). Tested with mocked services and, end to end, with the real YuNet and SFace models on public-domain NASA portraits. **Not yet run on the real camera; the thresholds are starting points, not measured values.** The web page comes in Phase 7.
+Status: implemented (Phase 6). Tested with mocked services and, end to end, with the real YuNet and SFace models on public-domain NASA portraits. **Not yet run on the real camera; the thresholds are starting points, not measured values.** The switch is on the **People** page (Phase 7): it shows on/off, whether the embedder is ready, how many people and reference images can be matched, pending and unreadable embeddings, the thresholds and who changed it last; switching asks for the password and explains a refusal.
 
 ## What a result means
 A model turns each face into 128 numbers (an *embedding*, SFace from OpenCV Zoo, Apache-2.0). Two embeddings are compared by **cosine similarity**: about 1.0 for the same photo, lower the less alike the faces look. A similarity is not proof of identity. Look-alikes, twins, photos of photos, masks, poor light and small faces can all mislead it, and **there is no liveness check** (a printed photo of an enrolled person can match).

@@ -4,6 +4,8 @@ import { api, ApiError, Camera, Health, setUnauthorizedHandler } from "./api";
 import { AnalysisPage } from "./components/analysis/AnalysisPage";
 import { CameraTile } from "./components/CameraTile";
 import { Captures } from "./components/Captures";
+import { FaceEventsPage } from "./components/faces/FaceEventsPage";
+import { PeoplePage } from "./components/faces/PeoplePage";
 import { Login } from "./components/Login";
 import { SetupPage } from "./components/setup/SetupPage";
 
@@ -112,6 +114,8 @@ export function App() {
           <h1>{appName}</h1>
           <nav className="tabs" aria-label="Sections">
             <NavLink to="/live" className={tab}>Live</NavLink>
+            <NavLink to="/events" className={tab}>Face events</NavLink>
+            <NavLink to="/people" className={tab}>People</NavLink>
             <NavLink to="/analysis" className={tab}>AI analysis</NavLink>
             <NavLink to="/setup" className={tab}>Camera &amp; NVR Setup</NavLink>
           </nav>
@@ -130,6 +134,8 @@ export function App() {
       <main className="content">
         <Routes>
           <Route path="/live" element={<LivePage />} />
+          <Route path="/events" element={<FaceEventsPage />} />
+          <Route path="/people" element={<PeoplePage />} />
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="*" element={<Navigate to="/live" replace />} />
