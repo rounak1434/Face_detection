@@ -21,6 +21,8 @@ import yaml
 
 from ai_surveillance.frigate_config import secret_name
 
+from . import credential_cases
+
 TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "deploy" / "frigate" / "config.yml"
 CONTAINER_ENV = {"FRIGATE_CAMERA_MAIN_URL", "FRIGATE_CAMERA_SUB_URL"}  # from deploy/.env today
 PASSWORD = "fake-Pa55!word"
@@ -336,7 +338,7 @@ def test_frigate_unreachable_before_apply_changes_nothing(signed_in, settings, f
 
 
 def test_undecryptable_password_changes_nothing(signed_in, settings, fake, secrets_dir):
-    """As after a changed key: the ciphertext does not open (here: one bound to another device)."""
+    """The ciphertext does not open for this row (here: one bound to another device)."""
     device = _approved(signed_in, settings)
     other = signed_in.post("/api/devices", json={**DEVICE, "name": "Other", "host": "192.168.1.30"}).json()
     con = _db(settings)
@@ -346,8 +348,38 @@ def test_undecryptable_password_changes_nothing(signed_in, settings, fake, secre
     con.close()
     resp = _apply(signed_in)
     assert resp.status_code == 409
-    assert "Gate NVR" in resp.json()["detail"] and "nothing was changed" in resp.json()["detail"]
+    assert "Gate NVR" in resp.json()["detail"] and "Nothing was changed in Frigate" in resp.json()["detail"]
     assert fake.events == [] and _secret_files(secrets_dir) == {}
+
+
+@pytest.mark.parametrize("kind", credential_cases.KINDS)
+def test_damaged_password_stops_apply_before_anything_changes(signed_in, settings, fake, secrets_dir, caplog, kind):
+    """Frigate already runs a device; its stored password is then damaged: the next apply touches nothing."""
+    from ai_surveillance.credentials import load_key
+
+    device = _approved(signed_in, settings)
+    assert _apply(signed_in).status_code == 200
+    file_before, secrets_before = fake.file, _secret_files(secrets_dir)
+    previous_copy = settings.frigate_previous_config_file.read_text()
+    con = _db(settings)
+    good = con.execute("SELECT password_enc FROM devices WHERE id=?", (device["id"],)).fetchone()[0]
+    bad = credential_cases.damage(kind, good, device["id"], load_key(settings))
+    con.execute("UPDATE devices SET password_enc=? WHERE id=?", (bad, device["id"]))
+    con.commit()
+    fake.events.clear()
+
+    with caplog.at_level("INFO"):
+        resp = _apply(signed_in)
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail.startswith("Gate NVR: Stored credential") and "Nothing was changed in Frigate" in detail
+    assert fake.events == []  # no restart, no save
+    assert fake.file == file_before and _secret_files(secrets_dir) == secrets_before
+    assert settings.frigate_previous_config_file.read_text() == previous_copy
+    for text in (resp.text, caplog.text):
+        assert bad[3:15] not in text and PASSWORD not in text and "Traceback" not in text
+    assert con.execute("SELECT password_enc FROM devices WHERE id=?", (device["id"],)).fetchone()[0] == bad
+    con.close()
 
 
 def test_only_one_apply_at_a_time(signed_in, settings, fake):

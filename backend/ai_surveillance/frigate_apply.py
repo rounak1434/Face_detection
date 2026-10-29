@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from . import devices as dev
 from .config import Settings
-from .credentials import CredentialCipher, CredentialError
+from .credentials import REPAIR_HINT, CredentialCipher, CredentialError
 from .db import Device
 from .frigate_client import FrigateClient, FrigateConfigRejected, FrigateError
 from .frigate_config import FrigateDevice, render_config, secret_name
@@ -93,7 +93,8 @@ def build_plan(db: Session, cipher: CredentialCipher, template_text: str) -> App
             try:
                 password = cipher.decrypt(d.password_enc, d.id)
             except CredentialError as exc:
-                raise ApplyError(409, f"{d.name}: {exc}. Re-enter the password; nothing was changed.") from None
+                log.warning("Apply to Frigate stopped: device %s: %s", d.id, exc)
+                raise ApplyError(409, f"{d.name}: {exc}. {REPAIR_HINT}. Nothing was changed in Frigate.") from None
         for stream, path in (("main", d.main_path), ("sub", d.sub_path)):
             if path:
                 url = dev.build_url(d.host, d.rtsp_port, path, d.username, password)

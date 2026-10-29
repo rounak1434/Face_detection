@@ -16,7 +16,15 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .config import Settings
 
 _NONCE_BYTES = 12
+_TAG_BYTES = 16  # AES-GCM authentication tag, appended to the ciphertext
 _PREFIX = "v1:"  # format version, so the scheme can change later
+
+# Operator-facing reasons. They never contain the stored value. AES-GCM cannot
+# tell a changed key from a damaged value (both fail the authentication tag).
+UNKNOWN_FORMAT = "Stored credential has an unknown format (the stored value is damaged)"
+DAMAGED = "Stored credential is damaged"
+KEY_OR_DAMAGED = "Stored credential cannot be decrypted: the credentials key changed or the stored value is damaged"
+REPAIR_HINT = "Edit the device and enter its password again, or restore the previous credentials key from its backup"
 
 
 class CredentialError(Exception):
@@ -59,10 +67,20 @@ class CredentialCipher:
         return _PREFIX + base64.urlsafe_b64encode(nonce + ct).decode()
 
     def decrypt(self, token: str, context: str) -> str:
-        if not token.startswith(_PREFIX):
-            raise CredentialError("Unknown credential format")
-        raw = base64.urlsafe_b64decode(token[len(_PREFIX):])
+        """Every failure is a CredentialError with one of the reasons above; nothing else escapes."""
+        if not isinstance(token, str) or not token.startswith(_PREFIX):
+            raise CredentialError(UNKNOWN_FORMAT)
         try:
-            return self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], context.encode()).decode()
-        except InvalidTag as exc:
-            raise CredentialError("Stored credential cannot be decrypted with the current key") from exc
+            raw = base64.urlsafe_b64decode(token[len(_PREFIX):])  # binascii.Error is a ValueError
+        except ValueError:
+            raise CredentialError(DAMAGED) from None
+        if len(raw) < _NONCE_BYTES + _TAG_BYTES:
+            raise CredentialError(DAMAGED)  # truncated: no room for nonce and tag
+        try:
+            plaintext = self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], context.encode())
+        except InvalidTag:
+            raise CredentialError(KEY_OR_DAMAGED) from None
+        try:
+            return plaintext.decode()
+        except UnicodeDecodeError:
+            raise CredentialError(DAMAGED) from None

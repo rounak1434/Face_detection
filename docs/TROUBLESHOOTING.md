@@ -95,7 +95,10 @@ Frigate is receiving no frames from the camera. Frigate still serves a placehold
 See [CAMERA-SETUP.md](CAMERA-SETUP.md#statuses) for what each status means.
 - **"Address Not Allowed"** for your NVR: its IP is outside `DEVICE_ALLOWED_NETWORKS`. Add its subnet in `.env`, then run `docker compose up -d`.
 - **"Reachable, Stream Not Verified"**: ffprobe is missing where the api runs. That is expected on a Windows dev PC. Inside Docker, ffprobe is part of the api image.
-- **"Stored credential cannot be decrypted"**: the credentials key changed. Re-enter the password, or restore the old `credentials.key` from your backup.
+- **"Stored credential cannot be decrypted: the credentials key changed or the stored value is damaged"**, **"Stored credential is damaged"** or **"…has an unknown format"** (connection test or Apply to Frigate, HTTP 409): the saved password cannot be read. The two causes cannot be told apart for certain (AES-GCM fails the same way), so:
+  1. If the credentials key may have changed (a new `api-data` volume, a changed `CREDENTIALS_KEY`), restore the old `credentials.key` from your backup (SETUP.md section 6) and restart the api.
+  2. Otherwise click **Edit** on the device, type the password again and save. That replaces only the stored password; nothing else is changed, and nothing is changed before you do it.
+  Apply to Frigate stops before touching Frigate or its secret files while any switched-on, connected device has such a password. The api log names the device id and the reason, never the stored value.
 - **The webcam doesn't start**: the browser needs https or localhost. Allow camera access in the browser's site settings.
 
 ## "Apply to Frigate" fails

@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import devices as dev
-from ..credentials import CredentialError
+from ..credentials import REPAIR_HINT, CredentialError
 from ..db import Device, as_utc, utcnow
 from ..deps import AppState, current_user, get_db, get_state
 from ..frigate_config import MAX_DEVICES as MAX_FRIGATE_DEVICES
@@ -265,7 +265,9 @@ async def test_connection(device_id: str, db: Session = Depends(get_db), state: 
         try:
             password = state.cipher.decrypt(device.password_enc, device.id)
         except CredentialError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, f"{exc}. Re-enter the password.") from exc
+            # The record is left as it is; editing the device with a new password repairs it.
+            log.warning("Device %s: %s; connection test not run", device.id, exc)
+            raise HTTPException(status.HTTP_409_CONFLICT, f"{exc}. {REPAIR_HINT}") from None
 
     results = await dev.test_device(
         state.settings, device.kind, device.host, device.rtsp_port,

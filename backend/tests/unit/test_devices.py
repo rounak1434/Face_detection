@@ -8,10 +8,12 @@ import sqlite3
 
 import pytest
 
+from ai_surveillance import credentials, netguard
 from ai_surveillance import devices as dev
-from ai_surveillance import netguard
 from ai_surveillance.credentials import CredentialCipher, CredentialError
 from ai_surveillance.rtsp import ProbeResult, StreamInfo
+
+from . import credential_cases
 
 SECRET = "S3cret!pass@word"
 
@@ -111,6 +113,44 @@ def test_cipher_binds_ciphertext_to_device():
         cipher.decrypt(token, "device-b")  # copied to another row
     with pytest.raises(CredentialError):
         CredentialCipher(b"x" * 32).decrypt(token, "device-a")  # wrong key
+
+
+@pytest.mark.parametrize("kind", credential_cases.KINDS)
+def test_damaged_ciphertext_always_raises_credential_error(kind):
+    """Only CredentialError escapes decrypt, with a fixed reason that never contains the stored value."""
+    key = b"k" * 32
+    token = credential_cases.damage(kind, CredentialCipher(key).encrypt("fake-pass", "device-a"), "device-a", key)
+    with pytest.raises(CredentialError) as caught:
+        CredentialCipher(key).decrypt(token, "device-a")
+    message = str(caught.value)
+    assert message in (credentials.UNKNOWN_FORMAT, credentials.DAMAGED, credentials.KEY_OR_DAMAGED)
+    assert token[3:13] not in message and "fake" not in message
+    assert caught.value.__cause__ is None  # no chained low-level error with raw bytes
+
+
+@pytest.mark.parametrize("kind", credential_cases.KINDS)
+def test_test_connection_with_a_damaged_password_fails_safely(signed_in, settings, net, caplog, kind):
+    device = _create(signed_in).json()
+    con = sqlite3.connect(settings.database_url.removeprefix("sqlite:///"))
+    good = con.execute("select password_enc from devices").fetchone()[0]
+    bad = credential_cases.damage(kind, good, device["id"], credentials.load_key(settings))
+    con.execute("update devices set password_enc=?", (bad,))
+    con.commit()
+    caplog.set_level(logging.DEBUG)
+
+    resp = signed_in.post(f"/api/devices/{device['id']}/test")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail.startswith("Stored credential") and "enter its password again" in detail
+    assert net.connected == [] and net.probed == []  # no connection, no URL built
+    for text in (resp.text, caplog.text):
+        assert bad[3:15] not in text and SECRET not in text and "Traceback" not in text
+    # The record is unchanged until the operator replaces the password.
+    assert con.execute("select password_enc, status from devices").fetchone() == (bad, "not_tested")
+    con.close()
+    update = {**VALID, "password": "fake-repaired-pass"}
+    assert signed_in.put(f"/api/devices/{device['id']}", json=update).status_code == 200
+    assert signed_in.post(f"/api/devices/{device['id']}/test").json()["status"] == "connected"
 
 
 def test_key_file_created_once(settings):
