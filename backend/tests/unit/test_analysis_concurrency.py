@@ -79,16 +79,25 @@ def test_waiting_too_long_gives_503_busy(make_app, frigate, settings):
     settings.analysis_concurrency = 1
     settings.analysis_queue_timeout_seconds = 0.1
 
+    release = asyncio.Event()
+
     async def slow_detect(request):
-        await asyncio.sleep(0.5)
+        await release.wait()  # holds the only slot until the second request has been refused
         return httpx.Response(200, json=NO_FACES)
 
     frigate.post(f"{INFERENCE}/v1/detect").mock(side_effect=slow_detect)
 
     async def scenario(client, state):
         first = asyncio.create_task(client.post("/api/analysis/faces", files=_files()))
-        await asyncio.sleep(0.05)
+        # Wait until the first request really holds the slot. A fixed sleep here
+        # was flaky on slow machines: the second request could take it first.
+        for _ in range(500):
+            if _slot_value(state) == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert _slot_value(state) == 0
         second = await client.post("/api/analysis/faces", files=_files())
+        release.set()
         assert second.status_code == 503
         assert second.json()["error"] == "analysis_busy" and second.headers["retry-after"] == "5"
         assert (await first).status_code == 200
