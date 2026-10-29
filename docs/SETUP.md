@@ -81,6 +81,8 @@ The example works unchanged for a test on the same machine. It contains **no cre
 | `TZ` | `Asia/Kolkata` | You are in another timezone. |
 | `FRIGATE_CAMERA_MAIN_URL` / `_SUB_URL` | the test stream | You switch to a real NVR (section 9). |
 | `DEVICE_ALLOWED_NETWORKS` | `192.168.0.0/16,10.0.0.0/8` | You narrow it to your camera subnet. |
+| `CAPTURE_MIN_FREE_MB` | `1024` | Snapshots and clips share the data volume with the database. New captures are refused (HTTP 507, with the free space in the message) while less than this is free, so the database keeps room. `0` turns the check off (not recommended). |
+| `CAPTURE_RETENTION_DAYS` | `0` (keep) | You want old captures deleted automatically: captures older than this many days are deleted at startup and hourly. Clips still being saved are never deleted. |
 
 Never commit `deploy/.env`. It is gitignored.
 

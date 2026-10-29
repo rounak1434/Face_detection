@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..captures import create_clip_request, run_clip_export, take_snapshot
+from ..captures import InsufficientStorage, check_free_space, create_clip_request, run_clip_export, take_snapshot
 from ..db import Capture, as_utc
 from ..deps import AppState, current_user, get_db, get_state, known_camera
 
@@ -34,12 +34,20 @@ def _to_dict(c: Capture) -> dict:
     }
 
 
+def _require_free_space(state: AppState) -> None:
+    try:
+        check_free_space(state.store, state.settings)
+    except InsufficientStorage as exc:
+        raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, str(exc)) from exc
+
+
 @router.post("/cameras/{camera}/snapshot", status_code=status.HTTP_201_CREATED)
 async def snapshot(
     camera: str = Depends(known_camera),
     db: Session = Depends(get_db),
     state: AppState = Depends(get_state),
 ) -> dict:
+    _require_free_space(state)
     capture = await take_snapshot(db, state.frigate, state.store, camera)
     if capture.status == "failed":
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, capture.error or "Snapshot failed")
@@ -57,6 +65,7 @@ async def clip(
     seconds = body.seconds if body and body.seconds is not None else settings.clip_default_seconds
     if not 1 <= seconds <= settings.clip_max_seconds:
         raise HTTPException(422, f"seconds must be 1-{settings.clip_max_seconds}")
+    _require_free_space(state)
     capture = create_clip_request(db, camera, seconds)
     state.spawn(
         run_clip_export(capture.id, int(time.time()), settings, state.frigate, state.store, state.db.sessionmaker)

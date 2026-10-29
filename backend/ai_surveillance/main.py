@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from .captures import fail_stale_pending
+from .captures import fail_stale_pending, retention_loop
 from .config import Settings, get_settings
 from .credentials import CredentialCipher, load_key
 from .db import Database
@@ -47,6 +47,8 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
             inference=InferenceClient(settings),
             analysis_slots=asyncio.Semaphore(settings.analysis_concurrency),
         )
+        if settings.capture_retention_days > 0:
+            app.state.app.spawn(retention_loop(db.sessionmaker, store, settings.capture_retention_days))
         yield
         state: AppState = app.state.app
         for task in list(state.background):

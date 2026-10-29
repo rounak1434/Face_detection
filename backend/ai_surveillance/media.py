@@ -6,6 +6,7 @@ client can never choose or escape the storage path.
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 _SAFE_NAME = re.compile(r"^[a-f0-9]{32}\.(jpg|mp4)$")
@@ -48,6 +49,10 @@ class MediaStore:
     def delete(self, file_name: str) -> None:
         for path in (self.path_for(file_name), self.partial_path(file_name)):
             path.unlink(missing_ok=True)
+
+    def free_bytes(self) -> int:
+        """Free space on the filesystem holding the captures (and, in Docker, the database)."""
+        return shutil.disk_usage(self.captures_dir).free
 
     def remove_partials(self) -> int:
         """Remove partial files of captures interrupted by a restart. Call only at startup."""

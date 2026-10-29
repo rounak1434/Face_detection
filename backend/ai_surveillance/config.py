@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     clip_export_timeout_seconds: float = 180.0
     clip_poll_interval_seconds: float = 2.0
 
+    # Captures share the data volume with the database. New captures are
+    # refused while less than this much space is free there (0 disables).
+    capture_min_free_mb: int = Field(default=1024, ge=0)
+    # Delete snapshots and clips older than this many days, checked at
+    # startup and hourly. 0 keeps them until an operator deletes them.
+    capture_retention_days: int = Field(default=0, ge=0)
+
     # Camera/NVR credentials are encrypted with this key (32 bytes, base64).
     # If unset, a key is generated once and kept in credentials_key_file.
     credentials_key: SecretStr | None = None

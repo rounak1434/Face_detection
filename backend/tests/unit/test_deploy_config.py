@@ -94,6 +94,14 @@ def test_api_talks_to_frigate_internal_port(compose):
     assert "env_file" not in compose["services"]["api"], "camera credentials must not reach the api container"
 
 
+def test_capture_storage_settings_reach_the_api(compose):
+    env = compose["services"]["api"]["environment"]
+    example = _env_example()
+    assert env["CAPTURE_MIN_FREE_MB"] == "${CAPTURE_MIN_FREE_MB:-1024}"
+    assert env["CAPTURE_RETENTION_DAYS"] == "${CAPTURE_RETENTION_DAYS:-0}"  # never deletes unless asked
+    assert example["CAPTURE_MIN_FREE_MB"] == "1024" and example["CAPTURE_RETENTION_DAYS"] == "0"
+
+
 def test_frigate_env_placeholders_are_provided(compose, frigate):
     text = (DEPLOY / "frigate" / "config.yml").read_text()
     used = set(re.findall(r"\{(FRIGATE_[A-Z_]+)\}", text))

@@ -8,15 +8,36 @@ needs time to flush the last recording segment and queues exports.
 import asyncio
 import logging
 import time
+from datetime import timedelta
 
 from sqlalchemy.orm import sessionmaker
 
 from .config import Settings
-from .db import Capture
+from .db import Capture, utcnow
 from .frigate_client import FrigateClient, FrigateError
 from .media import MediaStore, describe_os_error
 
 log = logging.getLogger(__name__)
+
+RETENTION_CHECK_SECONDS = 3600.0
+_MB = 1024 * 1024
+
+
+class InsufficientStorage(Exception):
+    """Too little free space to save another capture."""
+
+
+def check_free_space(store: MediaStore, settings: Settings) -> None:
+    """Refuse captures before they can fill the volume the database lives on."""
+    floor = settings.capture_min_free_mb
+    if floor <= 0:
+        return
+    free_mb = store.free_bytes() // _MB
+    if free_mb < floor:
+        raise InsufficientStorage(
+            f"Not enough free disk space for captures: {free_mb} MB free, at least {floor} MB is kept free "
+            "for the database (CAPTURE_MIN_FREE_MB). Delete old captures to free space."
+        )
 
 
 async def take_snapshot(db, frigate: FrigateClient, store: MediaStore, camera: str) -> Capture:
@@ -99,12 +120,13 @@ async def run_clip_export(
             db.commit()
 
         video_path = await wait_for_export(frigate, export_id, settings)
+        check_free_space(store, settings)  # space may have run out while Frigate exported
         async with frigate.stream_export_file(video_path) as resp:
             with store.partial_path(file_name).open("wb") as fh:
                 async for chunk in resp.aiter_bytes():
                     fh.write(chunk)
         size = store.finalize(file_name)
-    except FrigateError as exc:
+    except (FrigateError, InsufficientStorage) as exc:
         error = str(exc)[:500]
         log.warning("Clip export %s failed: %s", capture_id, error)
     except OSError as exc:
@@ -131,6 +153,43 @@ async def run_clip_export(
         else:
             row.status, row.error = "failed", error
         db.commit()
+
+
+def purge_old_captures(sessions: sessionmaker, store: MediaStore, days: int) -> int:
+    """Delete finished captures older than `days`: the file first, then the record.
+
+    Pending clips are never touched. A file that cannot be removed keeps its
+    record, so nothing is orphaned on disk; it is retried at the next check.
+    """
+    cutoff = utcnow() - timedelta(days=days)
+    removed = 0
+    with sessions() as db:
+        rows = db.query(Capture).filter(Capture.status != "pending", Capture.created_at < cutoff).all()
+        for row in rows:
+            if row.file_name:
+                try:
+                    store.delete(row.file_name)
+                except ValueError:
+                    pass  # not a name we generate: no file of ours to remove
+                except OSError as exc:
+                    log.warning("Retention: could not remove the file of capture %s: %s", row.id, exc)
+                    continue
+            db.delete(row)
+            removed += 1
+        db.commit()
+    return removed
+
+
+async def retention_loop(sessions: sessionmaker, store: MediaStore, days: int) -> None:
+    """Apply the retention period at startup, then every hour, until cancelled."""
+    while True:
+        try:
+            removed = await asyncio.to_thread(purge_old_captures, sessions, store, days)
+            if removed:
+                log.info("Retention: deleted %d capture(s) older than %d days", removed, days)
+        except Exception:
+            log.exception("Retention check failed; retrying in an hour")
+        await asyncio.sleep(RETENTION_CHECK_SECONDS)
 
 
 def fail_stale_pending(sessions: sessionmaker) -> int:
