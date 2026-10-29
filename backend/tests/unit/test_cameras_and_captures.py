@@ -1,10 +1,13 @@
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from ai_surveillance.main import create_app
 from ai_surveillance.media import MediaStore
 
 from .conftest import JPEG
@@ -206,6 +209,71 @@ def test_clip_download_failure_leaves_no_file(signed_in, frigate, settings):
     capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
     assert capture["status"] == "failed"
     assert list((settings.media_root / "captures").iterdir()) == []
+
+
+def _disk_full(path):
+    return OSError(28, "No space left on device", str(path))
+
+
+def test_snapshot_disk_error_is_reported_without_paths(signed_in, settings, monkeypatch):
+    real_write_bytes = Path.write_bytes
+
+    def fill_disk(self, data):
+        if self.name.endswith(".part"):
+            real_write_bytes(self, data[:3])  # partly written, then the disk is full
+            raise _disk_full(self)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", fill_disk)
+    resp = signed_in.post("/api/cameras/entrance/snapshot")
+    assert resp.status_code == 502
+    detail = resp.json()["detail"]
+    assert "No space left on device" in detail
+    assert str(settings.media_root) not in detail and "captures" not in detail
+    assert list((settings.media_root / "captures").iterdir()) == []  # no partial file left
+    listed = signed_in.get("/api/captures").json()
+    assert listed[0]["status"] == "failed"
+    assert str(settings.media_root) not in listed[0]["error"]
+
+
+def _ready_export(frigate):
+    _queue_export(frigate)
+    frigate.get("/api/jobs/export/entrance_abc").respond(200, json={"status": "success"})
+    frigate.get("/api/exports/entrance_abc").respond(200, json=EXPORT_ROW)
+    frigate.get("/exports/entrance_abc.mp4").respond(200, content=MP4)
+
+
+def test_clip_disk_error_is_reported_without_paths(signed_in, frigate, settings, monkeypatch):
+    _ready_export(frigate)
+    monkeypatch.setattr(MediaStore, "finalize", lambda self, name: (_ for _ in ()).throw(_disk_full(self.path_for(name))))
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "failed"
+    assert "No space left on device" in capture["error"]
+    assert str(settings.media_root) not in capture["error"] and "captures" not in capture["error"]
+    assert list((settings.media_root / "captures").iterdir()) == []
+
+
+def test_clip_is_not_left_pending_when_cleanup_also_fails(signed_in, frigate, settings, monkeypatch):
+    _ready_export(frigate)
+    monkeypatch.setattr(MediaStore, "finalize", lambda self, name: (_ for _ in ()).throw(_disk_full(self.path_for(name))))
+    monkeypatch.setattr(MediaStore, "delete", lambda self, name: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    capture = _wait_for(signed_in, signed_in.post("/api/cameras/entrance/clip", json={}).json()["id"])
+    assert capture["status"] == "failed"
+    assert "No space left on device" in capture["error"]
+
+
+def test_startup_removes_partial_files_left_by_an_interrupted_capture(settings, frigate):
+    captures = settings.media_root / "captures"
+    captures.mkdir(parents=True)
+    kept = captures / ("a" * 32 + ".jpg")
+    kept.write_bytes(JPEG)
+    for name in ("b" * 32 + ".mp4.part", "c" * 32 + ".jpg.part"):
+        (captures / name).write_bytes(b"partial")
+    other = captures / "notes.txt"  # not ours: never touched
+    other.write_bytes(b"x")
+    with TestClient(create_app(settings)):
+        pass
+    assert sorted(p.name for p in captures.iterdir()) == sorted([kept.name, other.name])
 
 
 @pytest.mark.parametrize("seconds", [0, 61, -5])

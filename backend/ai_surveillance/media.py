@@ -28,8 +28,12 @@ class MediaStore:
     def write_atomic(self, file_name: str, data: bytes) -> int:
         path = self.path_for(file_name)
         tmp = path.with_suffix(path.suffix + ".part")
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # never leave a partial file behind (e.g. disk full)
+            raise
         return len(data)
 
     def partial_path(self, file_name: str) -> Path:
@@ -44,3 +48,17 @@ class MediaStore:
     def delete(self, file_name: str) -> None:
         for path in (self.path_for(file_name), self.partial_path(file_name)):
             path.unlink(missing_ok=True)
+
+    def remove_partials(self) -> int:
+        """Remove partial files of captures interrupted by a restart. Call only at startup."""
+        removed = 0
+        for path in self.captures_dir.glob("*.part"):
+            if _SAFE_NAME.match(path.name.removesuffix(".part")):
+                path.unlink(missing_ok=True)
+                removed += 1
+        return removed
+
+
+def describe_os_error(action: str, exc: OSError) -> str:
+    """A message for API responses: the reason, never the storage path."""
+    return f"Could not save the {action}: {exc.strerror or type(exc).__name__}"

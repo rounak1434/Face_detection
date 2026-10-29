@@ -33,11 +33,15 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
             log.info("Marked %d interrupted capture(s) as failed", stale)
         with db.sessionmaker() as session:
             purge_expired_sessions(session)
+        store = MediaStore(settings.media_root)
+        partials = store.remove_partials()
+        if partials:
+            log.info("Removed %d partial capture file(s) left by a restart", partials)
         app.state.app = AppState(
             settings=settings,
             db=db,
             frigate=FrigateClient(settings, transport=frigate_transport),
-            store=MediaStore(settings.media_root),
+            store=store,
             throttle=LoginThrottle(settings.login_max_failures, settings.login_lockout_seconds),
             cipher=CredentialCipher(load_key(settings)),
             inference=InferenceClient(settings),

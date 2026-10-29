@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from .config import Settings
 from .db import Capture
 from .frigate_client import FrigateClient, FrigateError
-from .media import MediaStore
+from .media import MediaStore, describe_os_error
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,10 @@ async def take_snapshot(db, frigate: FrigateClient, store: MediaStore, camera: s
     except FrigateError as exc:
         capture.status = "failed"
         capture.error = str(exc)[:500]
+    except OSError as exc:
+        log.warning("Snapshot %s could not be saved: %s", capture.id, exc)
+        capture.status = "failed"
+        capture.error = describe_os_error("snapshot", exc)
     db.commit()
     return capture
 
@@ -100,15 +104,23 @@ async def run_clip_export(
                 async for chunk in resp.aiter_bytes():
                     fh.write(chunk)
         size = store.finalize(file_name)
-    except (FrigateError, OSError) as exc:
+    except FrigateError as exc:
         error = str(exc)[:500]
-        store.delete(file_name)
         log.warning("Clip export %s failed: %s", capture_id, error)
+    except OSError as exc:
+        # The full error (with the path) goes to the log only.
+        error = describe_os_error("clip", exc)
+        log.warning("Clip export %s failed: %s", capture_id, exc)
     except Exception:
         # Never leave a capture stuck in "pending".
         error = "Unexpected error while exporting the clip; see service logs"
-        store.delete(file_name)
         log.exception("Clip export %s failed unexpectedly", capture_id)
+    if error is not None:
+        try:
+            store.delete(file_name)
+        except OSError as exc:
+            # Removed at the next startup; the capture must still be marked failed.
+            log.warning("Could not remove the partial clip %s: %s", capture_id, exc)
 
     with sessions() as db:
         row = db.get(Capture, capture_id)
