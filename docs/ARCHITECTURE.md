@@ -62,7 +62,7 @@
 
 ## Planned milestones
 1. **Foundation (this milestone):** clean repo, live view, snapshot/clip, probe, tests, docs.
-2. **Registry and matching:** authorized-person enrollment and import with consent records, face matching that yields `AUTHORIZED` / `UNRECOGNIZED` / `INCONCLUSIVE` / `SYSTEM_ERROR`, Frigate MQTT events, Alembic migrations. Starts by evaluating Frigate's built-in face recognition against our own matcher (see ADR-0001).
+2. **Registry and matching:** authorized-person enrollment and import with consent records, face matching that yields `AUTHORIZED` / `UNRECOGNIZED` / `INCONCLUSIVE` / `SYSTEM_ERROR`, Frigate MQTT events, Alembic migrations. Starts by evaluating Frigate's built-in face recognition against our own matcher (see ADR-0001). Audit, proposed design and phase plan: [ADR-0004](adr/0004-face-events-and-recognition.md) (proposed, decisions pending).
 3. **Events:** event history with snapshots, clips, detection details and retention rules. Facial attribute estimates are shown as fallible estimates only.
 4. **Alerts and alarm:** confidence-gated alerts. Alarm output only through an integration verified on the real hardware.
 
