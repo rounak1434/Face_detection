@@ -6,6 +6,7 @@ default and are never logged.
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,14 @@ class Settings(BaseSettings):
     frigate_restart_down_seconds: float = Field(default=30.0, gt=0)
     frigate_restart_timeout_seconds: float = Field(default=180.0, gt=0)
     frigate_restart_poll_seconds: float = Field(default=1.0, ge=0)
+
+    # Face detection on Frigate person events (ADR-0004). "recording" decodes the event's best
+    # frame from the recording (usually the main stream: larger faces) and falls back to the
+    # event snapshot (detect stream) when no recording covers that moment; "snapshot" always
+    # uses the event snapshot.
+    face_frame_source: Literal["recording", "snapshot"] = "recording"
+    face_min_score: float = Field(default=0.7, ge=0.0, le=1.0)
+    face_max_faces: int = Field(default=10, ge=1, le=100)
 
     session_ttl_hours: int = 12
     # Set to false only for plain-HTTP local development.

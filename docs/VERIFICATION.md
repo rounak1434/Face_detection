@@ -212,6 +212,15 @@ Windows 11, Python 3.12.10, Node 24; WSL Ubuntu 26.04.1, Python 3.14.4. Commands
 - Repeats for flakiness: `test_frigate_apply.py` + `test_frigate_secrets.py` 5× on Windows (59 passed, 4 skipped each time) and 3× on Linux per task: no flaky result.
 Unit and simulated tests only. **No real Docker, Frigate, go2rtc, camera, NVR or GPU test was run in these tasks** (Task E is blocked: no Docker on this PC, the Linux AI PC is unavailable).
 
+## Face integration, Phase 2: face detection on Frigate person events, 2026-10-29, base `ae8373e`
+| Kind | Evidence | Result |
+|---|---|---|
+| Unit / mocked integration | `backend/tests/unit/test_face_detection.py`: Frigate (respx; query parameters, clean-snapshot parameters, `X-Frame-Time`, 404s, non-image answers, unsafe event ids) and inference mocked (faces, no faces, refused frames, detector failure, 503 model unavailable, 502, malformed answers, unreachable services, damaged crop) | 23 passed (Windows and Linux) |
+| Real model | Same file, `test_real_yunet_finds_the_face_in_a_frigate_snapshot`: real YuNet in-process (inference package and verified model in a throwaway WSL venv; model downloaded and SHA-256 checked) on the public-domain fixture served as a Frigate snapshot | 1 passed (WSL): box (257, 115, 76, 102), score 0.9416; skipped on Windows and in CI |
+| Real Frigate / camera | none | not run |
+
+Backend: Windows **470 passed, 8 skipped**; Linux (fresh clone of `ae8373e` + this change) **476 passed, 2 skipped**; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

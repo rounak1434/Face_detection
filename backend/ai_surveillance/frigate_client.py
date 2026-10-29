@@ -8,13 +8,26 @@ docs/VERIFICATION.md.
 
 import asyncio
 import posixpath
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from urllib.parse import quote
 
 import httpx
 
 from .config import Settings
+
+# Frigate event ids are "<timestamp>-<random>" (CharField max_length 30 in frigate/models.py).
+_EVENT_ID = re.compile(r"^[A-Za-z0-9.\-]{1,30}$")
+
+
+@dataclass(frozen=True)
+class PersonEvent:
+    id: str
+    camera: str
+    start_time: float
+    end_time: float
 
 
 class FrigateError(Exception):
@@ -186,6 +199,56 @@ class FrigateClient:
         if resp.status_code != 200:
             detail = _message(resp)
             raise FrigateError(f"Frigate restart returned HTTP {resp.status_code}" + (f": {detail}" if detail else ""))
+
+    async def person_events(self, after: float, limit: int = 50) -> list[PersonEvent]:
+        """Finished person events that have a snapshot, oldest first (Frigate 0.18.2 /api/events).
+
+        `after` filters on the event's start time (Frigate: `Event.start_time > after`).
+        Entries without a usable id, camera or times are skipped.
+        """
+        data = await self._json("GET", "/api/events", params={
+            "labels": "person", "has_snapshot": 1, "in_progress": 0,
+            "after": after, "sort": "date_asc", "limit": limit,
+        })
+        if not isinstance(data, list):
+            raise FrigateError("Frigate events response is not a list")
+        events = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            event_id, camera = item.get("id"), item.get("camera")
+            start, end = item.get("start_time"), item.get("end_time")
+            if (isinstance(event_id, str) and _EVENT_ID.match(event_id) and isinstance(camera, str) and camera
+                    and isinstance(start, int | float) and isinstance(end, int | float)):
+                events.append(PersonEvent(event_id, camera, float(start), float(end)))
+        return events
+
+    async def event_snapshot(self, event_id: str) -> tuple[bytes, float | None]:
+        """The event's best frame without overlays, and its frame time (header X-Frame-Time).
+
+        bbox/timestamp/crop are switched off explicitly: otherwise the camera's snapshot
+        settings apply, and a drawn box over a face would distort detection.
+        """
+        resp = await self._request("GET", f"/api/events/{quote(event_id, safe='')}/snapshot.jpg",
+                                   params={"bbox": 0, "timestamp": 0, "crop": 0, "quality": 95})
+        if resp.status_code == 404:
+            raise FrigateNotFound(f"Frigate has no snapshot for event {event_id}")
+        if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("image/"):
+            raise FrigateError(f"Frigate snapshot for event {event_id} returned HTTP {resp.status_code}")
+        try:
+            frame_time = float(resp.headers["x-frame-time"])
+        except (KeyError, ValueError):
+            frame_time = None
+        return resp.content, (frame_time if frame_time and frame_time > 0 else None)
+
+    async def recording_snapshot(self, camera: str, frame_time: float) -> bytes:
+        """A frame decoded from the recording (the camera's record stream, usually the main stream)."""
+        resp = await self._request("GET", f"/api/{quote(camera, safe='')}/recordings/{frame_time:.6f}/snapshot.jpg")
+        if resp.status_code == 404:
+            raise FrigateNotFound(f"No recording of {camera!r} at {frame_time:.3f}")
+        if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("image/"):
+            raise FrigateError(f"Frigate recording snapshot for {camera!r} returned HTTP {resp.status_code}")
+        return resp.content
 
     async def camera_fps(self, camera: str) -> float | None:
         """Frames per second Frigate is receiving, from /api/stats; None if not reported."""

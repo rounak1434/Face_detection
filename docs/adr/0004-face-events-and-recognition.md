@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **proposed** (Phase 1 audit). Nothing in this document is implemented yet.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8. Decisions 3–5 in section 7 are still open.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -130,3 +130,12 @@ There is deliberately **no** endpoint that enrolls from an event or crop.
 4. **Real stack** (Docker, Frigate, the Linux AI PC) for Phase 10; no Docker on this PC.
 5. **Policy decisions**: encryption at rest of biometric data; password re-confirmation; retention default; who may be enrolled and how consent is recorded.
 6. Camera resolution at the door (§4) decides whether recognition is feasible at all; measured in Phase 2/10.
+
+## 8. Phase 2: face detection on Frigate person events (done, 2026-10-29)
+- `FrigateClient.person_events(after, limit)`: `GET /api/events?labels=person&has_snapshot=1&in_progress=0&after=…&sort=date_asc&limit=…` (parameters from `frigate/api/defs/query/events_query_parameters.py`; `after` compares the **start** time, `frigate/api/event.py`). Entries without a safe id (`[A-Za-z0-9.-]{1,30}`), a camera or both times are skipped.
+- `FrigateClient.event_snapshot(id)`: `GET /api/events/{id}/snapshot.jpg?bbox=0&timestamp=0&crop=0&quality=95`. Without the explicit zeros the camera's snapshot settings apply (`_resolve_snapshot_settings`), and a drawn box would cover the face. Returns the frame time from Frigate's `X-Frame-Time` header.
+- `FrigateClient.recording_snapshot(camera, frame_time)`: `GET /api/{camera}/recordings/{frame_time}/snapshot.jpg`, decoded by Frigate from the recording segment (the record stream: the main stream in our template); 404 when no segment covers the time.
+- `face_detection.detect_event_faces(event)`: frame from the recording at the snapshot's frame time when `FACE_FRAME_SOURCE=recording` (default), else, or when no recording covers it, the event snapshot; then the existing YuNet via `/v1/detect` (`FACE_MIN_SCORE` 0.7, `FACE_MAX_FACES` 10). Final statuses: `faces_detected`, `no_faces_detected`, `frame_unavailable`, `frame_rejected`, `inference_failed`. Temporary problems (Frigate or inference unreachable, model not loaded, unexpected answers) raise, so the Phase 3 loop retries the event instead of recording a wrong result.
+- Not yet: no background loop, nothing stored, settings not passed by Compose (Phase 3). Detection only; nothing identifies anyone.
+- Evidence: `backend/tests/unit/test_face_detection.py`, 23 mocked tests (Frigate via respx, inference mocked) and 1 test with the **real YuNet** in-process on the public-domain fixture served as a Frigate snapshot: box (257, 115, 76, 102), score 0.9416, identical to AI-ANALYSIS.md. The real-model test needs the inference package and model alongside the backend: it ran in WSL; it is skipped on Windows and in CI's backend job.
+- Open for Phase 10: the size of real faces in the recording versus the snapshot at the door, and the recording's availability right after an event ends (segments are flushed in steps; the fallback covers a missing segment).
