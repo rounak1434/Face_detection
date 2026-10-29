@@ -252,6 +252,38 @@ def test_api_is_set_up_for_apply_to_frigate(compose):
     assert env["FRIGATE_PREVIOUS_CONFIG_FILE"].startswith("/data/")  # the api-data volume
 
 
+def _depends(svc) -> dict[str, str]:
+    deps = svc.get("depends_on") or {}
+    if isinstance(deps, list):
+        return {d: "service_started" for d in deps}
+    return {d: (spec or {}).get("condition", "service_started") for d, spec in deps.items()}
+
+
+def test_service_references_agree(compose):
+    """What `docker compose config` would reject or what would hang at startup, checked without Docker."""
+    services, declared = compose["services"], set(compose.get("volumes") or {})
+    for name, svc in services.items():
+        for dep, condition in _depends(svc).items():
+            assert dep in services, f"{name} depends on unknown service {dep}"
+            if condition == "service_healthy":
+                assert "healthcheck" in services[dep], f"{name} waits for {dep} to be healthy; {dep} has no healthcheck"
+            if condition == "service_completed_successfully":
+                assert services[dep].get("restart", "no") == "no", f"{dep} must run once for {name} to start"
+        for volume in svc.get("volumes", []):
+            source = volume.split(":")[0] if isinstance(volume, str) else volume.get("source", "")
+            if source and not source.startswith((".", "/")):
+                assert source in declared, f"{name}: named volume {source} is not declared"
+
+
+def test_nvidia_override_only_adjusts_existing_services(compose):
+    override = yaml.safe_load((DEPLOY / "compose.nvidia.yaml").read_text())
+    assert set(override["services"]) <= set(compose["services"])
+    # Images and the GPU only: mounts, environment and dependencies come from compose.yaml unchanged.
+    assert set(override["services"]["frigate"]) == {"image", "deploy"}
+    assert set(override["services"]["frigate-init"]) == {"image"}
+    assert "volumes" not in override and "networks" not in override
+
+
 def test_frigate_still_gets_no_saved_device_credentials_by_environment(compose):
     env = compose["services"]["frigate"]["environment"]
     assert not any(key.startswith("FRIGATE_DEV_") for key in env)

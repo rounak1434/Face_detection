@@ -189,6 +189,20 @@ Not changed, by design: the secrets volume holds plain-text URLs (Frigate must r
 
 Results: backend Windows **445 passed, 7 skipped** (the new symlink test is Linux-only); Linux (fresh clone of `2d98ff2` + this change) **451 passed, 1 skipped**, secret-file tests 3/3 repeats; `ruff` clean; frontend **47 passed**, build OK (Windows).
 
+## Static Compose validation (Task D), 2026-10-29, base `ff5e853`
+**No container runtime is available**: Windows has no `docker` and no Docker Desktop; WSL Ubuntu has no `docker`, `docker-compose`, `podman` or `nerdctl`. Nothing was installed. So `docker compose config --quiet` was **not run**; runtime validation stays **Blocked**.
+
+Substitute, run in WSL (Python 3.14, jsonschema): the Compose Specification JSON schema from `compose-spec/compose-spec` at commit `3a4a6995e4a971f6173dff9130cb3e38e6738651` (2026-10-23; `schema/compose-spec.json`, SHA-256 `D549057E…3ED10E64`, kept outside the repo). A one-off script interpolated variables from **`deploy/.env.example` only** (never `deploy/.env`), merged `compose.nvidia.yaml` over `compose.yaml` as Compose merges mappings, and validated both:
+- `compose.yaml`: services api, frigate, frigate-init, inference, test-stream, web; **0 schema errors**.
+- `compose.yaml + compose.nvidia.yaml`: same services; **0 schema errors**.
+- Required variables (`${VAR:?…}`) missing from `.env.example`: none. Unknown `depends_on` targets, undeclared named volumes, missing bind sources, `service_healthy` without a healthcheck, a one-shot dependency that restarts: none.
+- The validator itself rejects a misspelled key, a wrong `depends_on` condition and a non-string volume (sanity check).
+Not covered by a schema: Docker's own interpolation corner cases, image availability, the runtime merge of lists, whether the files actually start.
+
+Manual review for contradictions: Frigate waits for `frigate-init` (`service_completed_successfully`, `restart: "no"`, quoted so YAML does not read it as `false`); api starts after frigate and inference (no health conditions, consistent with frigate having no healthcheck yet: backlog item 5); the template is mounted read-only in `frigate-init` and the api and not at all in Frigate; `frigate-secrets` read-only in Frigate, read-write only in the api, prepared by `frigate-init` for uid 10001, which is the api image's user; the NVIDIA override changes only the two images (same tag, `-tensorrt`) and adds the GPU, so mounts, environment and dependencies are inherited. After a host reboot Docker restarts Frigate by its restart policy without waiting for `frigate-init`; that is fine because the live config then already exists, and the systemd unit's `docker compose up -d` runs the idempotent init again. An install from before the move starts with a new Frigate database unless the files are moved as SETUP 4a says; nothing is deleted either way.
+
+New static tests in `test_deploy_config.py` (run in CI): `test_service_references_agree`, `test_nvidia_override_only_adjusts_existing_services`. Backend: Windows **447 passed, 7 skipped**; Linux (fresh clone of `ff5e853` + this change) **453 passed, 1 skipped**; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:
