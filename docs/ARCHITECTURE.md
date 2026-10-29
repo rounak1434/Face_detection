@@ -43,6 +43,7 @@
 - **Media:** `GET /api/captures/<id>/file`. Requires sign-in. File names are server-generated (`<uuid>.jpg|mp4`) and validated before any disk access.
 
 - **AI analysis:** `POST /api/analysis/faces` takes a multipart upload, checks its size, structure and magic bytes, and forwards the image bytes to the internal inference service (`POST /v1/detect`). The service decodes it safely, runs YuNet and returns boxes, keypoints, crops and quality hints. Nothing is stored: uploads are parsed in memory, with no temporary files. Details in [AI-ANALYSIS.md](AI-ANALYSIS.md).
+- **Face events:** a background loop in the api polls Frigate's finished person events, takes each event's best frame (from the recording when possible), runs the face detector in the inference service and stores one face event per Frigate event, with frame and crops only when faces were found. `GET /api/face-events` and its image routes serve the history behind sign-in. Detection only, no identification. Details in [FACE-EVENTS.md](FACE-EVENTS.md).
 - **Database migrations:** Alembic runs at api startup (`ai_surveillance/migrations`).
   - A database created before migrations existed is checked column by column against `0001_baseline`. Only an exact match is backed up and stamped; anything else stops startup unchanged.
   - Any existing SQLite file is backed up before a schema change.

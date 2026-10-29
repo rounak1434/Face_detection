@@ -19,7 +19,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | Face tracking across frames | Missing | Frigate tracks objects (person); no face tracks of our own. |
 | Face recognition, enrollment, consent records (milestone 2) | **Missing** | No code. Engine choice (Frigate built-in vs. own matcher) still to be evaluated per ADR-0001. |
 | Age, expression, glasses, beard, mask estimates (milestone 3) | **Missing** | No models in the registry. Must be shown as fallible estimates only. |
-| Event history (milestone 3), Frigate MQTT events | **Partial** | Face events from Frigate person events are ingested and stored (ADR-0004 Phase 3, [FACE-EVENTS.md](FACE-EVENTS.md); mocked Frigate and real YuNet only); no API or page yet (Phases 4 and 7). No MQTT: Frigate's HTTP events API is polled instead. |
+| Event history (milestone 3), Frigate MQTT events | **Partial** | Face events from Frigate person events are ingested and stored (ADR-0004 Phase 3, [FACE-EVENTS.md](FACE-EVENTS.md); mocked Frigate and real YuNet only); history API with filters, paging, images and delete (Phase 4); no page yet (Phase 7). No MQTT: Frigate's HTTP events API is polled instead. |
 | Alerts and alarm output (milestone 4) | **Missing** | No code; must be verified on the real hardware first. |
 | Database migrations | Done (verified) | Alembic baseline plus `0002_device_use_in_frigate`; `test_migrations.py` (26). |
 | Backup, verify, restore, interruption handling, recovery copies | Done (verified: Windows + Linux/WSL) | `dbtools.py`; `test_dbtools.py` (79); 41-check drill. Power loss and real signals: not shown. |

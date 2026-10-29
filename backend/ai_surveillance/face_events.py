@@ -32,14 +32,13 @@ from sqlalchemy.orm import sessionmaker
 from .captures import InsufficientStorage, check_free_space
 from .config import Settings
 from .db import FaceDetection, FaceEvent, as_utc, new_id, utcnow
-from .face_detection import FACES_DETECTED, EventFaces, detect_event_faces
+from .face_detection import FACES_DETECTED, GAVE_UP, EventFaces, detect_event_faces
 from .frigate_client import FrigateClient, FrigateError, PersonEvent
 from .inference_client import InferenceClient, InferenceUnavailable
 from .media import MediaStore
 
 log = logging.getLogger(__name__)
 
-GAVE_UP = "gave_up"
 PAGE_SIZE = 50
 MAX_PAGES_PER_POLL = 20
 RETENTION_CHECK_SECONDS = 3600

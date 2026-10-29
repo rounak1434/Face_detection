@@ -233,6 +233,9 @@ Backend: Windows **470 passed, 8 skipped**; Linux (fresh clone of `ae8373e` + th
 
 Backend: Windows **496 passed, 8 skipped**; Linux (fresh clone of `427b691` + this change) **502 passed, 2 skipped**; `ruff` clean.
 
+## Face integration, Phase 4: face event API, 2026-10-29, base `4714646`
+In-process API tests (`test_face_events_api.py`, 17) with a real SQLite database and real files, no Frigate involved: sign-in required on all five routes; newest first; fields; no server file names or media path in responses; stable keyset paging over 5 events in pages of 2 while a new event arrives; equal start times neither skipped nor repeated; filters (camera, status, has_faces, since/until, an offset converted to UTC, no offset as UTC); 422 for an unknown status, bad cursors, limits 0 and 201, a bad date; 404 for unknown and malformed ids; frame and crop bytes with `image/jpeg` and `private, no-store`; a crop only through its own event; 404 for events without a frame and for a file missing on disk; delete removes rows and only that event's images, a second delete 404; an image that cannot be removed gives 500 with the OS reason only and keeps the event. Backend: Windows **513 passed, 8 skipped**; Linux (fresh clone of `4714646` + this change) **519 passed, 2 skipped**, face tests 3/3 repeats; real YuNet test passed again; `ruff` clean. **Mocked/in-process only; no real Frigate.**
+
 ## To fill in on the Ubuntu host
 ```
 Date:

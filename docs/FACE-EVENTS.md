@@ -2,7 +2,7 @@
 
 Each finished **person event** in Frigate is checked once for faces with the face detector (YuNet) and stored as a **face event**. This is **face detection only**: it records where faces are, not who they are. Nobody is identified, and nothing is matched against anyone. Design and phase plan: [ADR-0004](adr/0004-face-events-and-recognition.md).
 
-Status: ingestion and storage are implemented (Phase 3). The API and the web page for face events come in Phase 4 and Phase 7. Tested with a simulated Frigate and the real detector model; **not yet run against a real Frigate or camera**.
+Status: ingestion and storage (Phase 3) and the API (Phase 4) are implemented. The web page comes in Phase 7. Tested with a simulated Frigate and the real detector model; **not yet run against a real Frigate or camera**.
 
 ## How it works
 1. Every 10 seconds the api asks Frigate for finished person events that have a snapshot, oldest first (`GET /api/events?labels=person&has_snapshot=1&in_progress=0`).
@@ -44,6 +44,23 @@ Per face: box, detection score (how sure the detector is that it is a face, not 
 | `FACE_FRAME_SOURCE` | `recording` | `recording` or `snapshot` |
 | `FACE_MIN_SCORE`, `FACE_MAX_FACES` | `0.7`, `10` | Detector threshold and faces per frame (not passed by Compose; set them in the api's environment if needed) |
 | `FACE_POLL_SECONDS`, `FACE_EVENT_LOOKBACK_SECONDS`, `FACE_BACKFILL_SECONDS`, `FACE_MAX_ATTEMPTS` | `10`, `3600`, `3600`, `3` | Polling (not passed by Compose) |
+
+## API
+All routes need a signed-in session (the existing login). Responses never contain file names, paths, or anything about identity.
+
+| Method and path | Result |
+|---|---|
+| `GET /api/face-events` | `{"items": [event, …], "next_cursor": "…" or null}`, newest first. Query: `camera`, `status` (one of the statuses above), `has_faces` (`true`/`false`), `since`, `until` (ISO 8601 start time; `since` inclusive, `until` exclusive; UTC when no offset is given), `limit` (1–200, default 50), `cursor` (from `next_cursor`). Paging is by start time and id, so events arriving meanwhile do not shift or repeat pages. An unknown status, a bad cursor, a bad date or a limit out of range gives 422. |
+| `GET /api/face-events/{id}` | One event; 404 if unknown |
+| `GET /api/face-events/{id}/frame` | The stored frame (JPEG, `Cache-Control: private, no-store`); 404 when the event kept no frame or the file is missing |
+| `GET /api/face-events/{id}/detections/{detection_id}/crop` | One face crop; only through its own event (another event's id gives 404) |
+| `DELETE /api/face-events/{id}` | 204; images first, then the rows. If an image cannot be removed: 500 with the OS reason only, and the event is kept so it can be deleted again |
+
+Event fields: `id`, `frigate_event_id`, `camera`, `started_at`, `ended_at`, `status`, `face_count`, `frame_source`, `frame` (`width`, `height`) or null, `frame_url` or null, `detector`, `detail`, `detections`. Detection fields: `id`, `position`, `box` (`x`, `y`, `w`, `h` in frame pixels), `score` (detection confidence only), `keypoints5`, `quality`, `crop_url` or null.
+
+```bash
+curl -k -b cookies.txt "https://localhost/api/face-events?camera=entrance&has_faces=true&limit=20"
+```
 
 ## Not known yet
 - Whether faces at the real door are large enough, in the recording or the snapshot.

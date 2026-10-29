@@ -32,6 +32,9 @@ NO_FACES_DETECTED = "no_faces_detected"
 FRAME_UNAVAILABLE = "frame_unavailable"
 FRAME_REJECTED = "frame_rejected"
 INFERENCE_FAILED = "inference_failed"
+GAVE_UP = "gave_up"  # set by the ingestion loop after repeated temporary failures
+FACE_EVENT_STATUSES = frozenset({FACES_DETECTED, NO_FACES_DETECTED, FRAME_UNAVAILABLE, FRAME_REJECTED,
+                                 INFERENCE_FAILED, GAVE_UP})
 
 # Inference error codes that are about this image (final), as opposed to the service (temporary).
 _IMAGE_ERRORS = {"invalid_image", "unsupported_format", "too_large"}

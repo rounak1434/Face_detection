@@ -16,7 +16,7 @@ from .face_events import Ingestor, face_ingest_loop, face_retention_loop
 from .frigate_client import FrigateClient
 from .media import MediaStore
 from .inference_client import InferenceClient
-from .routes import analysis, auth, cameras, captures, devices, frigate, health, live
+from .routes import analysis, auth, cameras, captures, devices, face_events, frigate, health, live
 from .security import LoginThrottle, purge_expired_sessions
 
 log = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         db.engine.dispose()
 
     app = FastAPI(title=f"{settings.app_display_name} API", lifespan=lifespan, docs_url=None, redoc_url=None)
-    for module in (health, auth, cameras, captures, devices, frigate, analysis, live):
+    for module in (health, auth, cameras, captures, devices, frigate, face_events, analysis, live):
         app.include_router(module.router)
     return app
 

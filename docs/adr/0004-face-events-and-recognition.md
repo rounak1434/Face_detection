@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9. Decisions 3–5 in section 7 are still open.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10. Decisions 3–5 in section 7 are still open.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -149,3 +149,6 @@ Operator description: [FACE-EVENTS.md](../FACE-EVENTS.md). Differences from sect
 - Free-space floor shared with captures (`CAPTURE_MIN_FREE_MB`); retention `FACE_EVENT_RETENTION_DAYS` (default 30) runs hourly, files before rows, one commit per event.
 - Found while writing the tests: a malformed face entry from the inference service would have raised inside `save()` on every poll and stalled ingestion on that event; `face_detection` now keeps only well-formed faces (box with four numbers, numeric score, five numeric keypoints).
 Evidence: `test_face_events.py` (19, mocked Frigate and inference, real SQLite and files), migration model-drift and round-trip tests, `test_deploy_config.py`.
+
+## 10. Phase 4: face event API (done, 2026-10-29)
+`backend/ai_surveillance/routes/face_events.py`; contract in [FACE-EVENTS.md](../FACE-EVENTS.md#api). Differences from section 5's table: the list filter is `status` (detection statuses) plus `has_faces`, because recognition outcomes and `person_id` do not exist until Phase 6; the crop route is nested, `/api/face-events/{id}/detections/{detection_id}/crop`, so a crop is reachable only through its own event; the list answers `{items, next_cursor}` with an opaque keyset cursor on (start time, id). Ids are checked against the server's 32-hex format before any lookup; images are served only from `media/faces` through the media store's name and path checks. Evidence: `test_face_events_api.py` (17).
