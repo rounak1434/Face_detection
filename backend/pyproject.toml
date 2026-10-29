@@ -18,13 +18,13 @@ dependencies = [
   "cryptography>=42",
   "alembic>=1.13,<2",
   "python-multipart>=0.0.18",
+  "pyyaml>=6",  # Frigate config rendering (already installed via uvicorn[standard])
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
   "respx>=0.21",
-  "pyyaml>=6",
   "ruff>=0.15",
 ]
 

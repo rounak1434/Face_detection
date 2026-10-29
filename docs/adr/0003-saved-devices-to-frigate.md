@@ -1,7 +1,9 @@
 # ADR-0003: Feeding saved cameras and NVRs to Frigate
 
-- Status: **proposed** (needs the owner's decisions listed at the end before implementation)
+- Status: **accepted** (option A), 2026-10-29
 - Date: 2026-10-29
+
+**Owner's decisions (2026-10-29):** option A; Compose may move Frigate's live config off the tracked file and add the `frigate-secrets` volume; a Frigate restart happens only on an explicit "Apply to Frigate", with a warning; only devices with "Use in Frigate" switched on **and** a successful connection test are applied; the fixed `entrance` camera from `.env` stays alongside the saved devices.
 
 ## Context
 
@@ -33,7 +35,7 @@
 | C | Keep `deploy/.env` as today; the setup page only shows the values to copy. | As today. | Manual. | None. |
 | (rejected) | Change Frigate's environment from the api. | — | — | Needs the Docker socket in the api: far too much privilege. |
 
-## Decisions needed from the owner
+## Decisions that were needed from the owner (answered above)
 1. **Compose change** (Frigate is protected configuration): move Frigate's live `/config` off the tracked `deploy/frigate/config.yml` to an untracked directory or volume seeded from the template, and add the `frigate-secrets` volume (api read-write, Frigate read-only).
 2. **Restart:** accept a Frigate restart (about a minute without live view and recording) each time the operator presses "Apply to Frigate".
 3. **Approval rule:** only devices with an explicit "Use in Frigate" switch, and only after a successful connection test (`connected`)? Or allow untested devices with a warning?
