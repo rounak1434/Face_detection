@@ -35,6 +35,7 @@ Per face: box, detection score (how sure the detector is that it is a face, not 
 - Frames are kept **only** for events where a face was found; for all other events only the row is kept.
 - `FACE_EVENT_RETENTION_DAYS` (default **30**): older face events are deleted hourly, images first, then the row. `0` keeps them until deleted.
 - Nothing is sent outside the machine.
+- Frigate keeps its own event snapshots (14 days in our template) and recordings (3 days); deleting a face event here does not delete them. Deleted image files are unlinked, not overwritten: use full-disk encryption on the host.
 
 ## Settings (`deploy/.env`)
 | Variable | Default | Effect |
@@ -54,7 +55,7 @@ All routes need a signed-in session (the existing login). Responses never contai
 | `GET /api/face-events/{id}` | One event; 404 if unknown |
 | `GET /api/face-events/{id}/frame` | The stored frame (JPEG, `Cache-Control: private, no-store`); 404 when the event kept no frame or the file is missing |
 | `GET /api/face-events/{id}/detections/{detection_id}/crop` | One face crop; only through its own event (another event's id gives 404) |
-| `DELETE /api/face-events/{id}` | 204; images first, then the rows. If an image cannot be removed: 500 with the OS reason only, and the event is kept so it can be deleted again |
+| `DELETE /api/face-events/{id}` | 204; images first, then the rows; recorded in the audit log. If an image cannot be removed: 500 with the OS reason only, and the event is kept so it can be deleted again |
 
 Event fields: `id`, `frigate_event_id`, `camera`, `started_at`, `ended_at`, `status`, `face_count`, `frame_source`, `frame` (`width`, `height`) or null, `frame_url` or null, `detector`, `detail`, `recognition_state` (`off`, `unavailable`, `done`; null for events stored before recognition existed), `recognizer` (e.g. `sface 2021dec`), `detections`. Detection fields: `id`, `position`, `box` (`x`, `y`, `w`, `h` in frame pixels), `score` (detection confidence only), `keypoints5`, `quality`, `crop_url` or null, `recognition` or null: `outcome`, `person` (`id`, `display_name`; only for `AUTHORIZED`, null once that person is deleted), `similarity`, `thresholds` (`accept`, `reject` used for this face).
 

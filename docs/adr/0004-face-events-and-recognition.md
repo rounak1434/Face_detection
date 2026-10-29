@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11; Phase 6 (recognition and switch) done, see section 12; Phase 7 (frontend) done, see section 13. The policy decisions (section 7, item 5) were taken on 2026-10-30.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11; Phase 6 (recognition and switch) done, see section 12; Phase 7 (frontend) done, see section 13; Phase 8 (security and privacy review) done, see section 14. The policy decisions (section 7, item 5) were taken on 2026-10-30.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -185,3 +185,6 @@ Evidence: `inference/tests/test_api.py` (6 new `/v1/embed` contract tests), `inf
 - Images are plain `<img>` requests to the signed-in routes (same-origin cookie); nothing is cached by the app.
 - Found while checking in a real browser: the consent date defaulted to the UTC date and also capped the date picker, so before 05:30 in India today's date could not be chosen; it now uses the local date. The audit log's 32-character ids widened the page on a phone; table cells now wrap.
 Evidence: `frontend/src/test/faces-pages.test.tsx` (13), and a manual run of the real api, the real inference service (YuNet + SFace) and the Vite dev server with a throwaway database.
+
+## 14. Phase 8: security and privacy review (done, 2026-10-30)
+Checklist, findings and known limits in [VERIFICATION.md](../VERIFICATION.md) (Phase 8 section). Three findings fixed, each with a regression test that failed before the fix: (1) the switch and gallery were read once per poll, so switching off or deactivating someone did not apply until the next poll; now read before every event; (2) deleted rows stayed readable in SQLite free pages; `secure_delete=ON`; (3) deleting a face event was not audited; now `face_event_deleted`. Not fixed, documented: unlinked files are not overwritten (full-disk encryption recommended), Frigate's own snapshots and recordings, backups keep deleted data, no audit-log retention, image views not audited, single administrator, no liveness.

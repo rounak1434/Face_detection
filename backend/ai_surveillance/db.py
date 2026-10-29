@@ -225,6 +225,9 @@ def make_engine(database_url: str) -> Engine:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=5000")
             cursor.execute("PRAGMA foreign_keys=ON")
+            # Overwrite deleted content with zeros, so deleted people, consent notes and encrypted
+            # embeddings do not stay readable in free pages of app.db (privacy review, Phase 8).
+            cursor.execute("PRAGMA secure_delete=ON")
             cursor.close()
     return engine
 

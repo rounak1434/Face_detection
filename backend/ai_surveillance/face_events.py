@@ -37,6 +37,7 @@ from .config import Settings
 from .credentials import CredentialCipher
 from .db import FaceDetection, FaceEvent, Person, as_utc, new_id, utcnow
 from .face_detection import FACES_DETECTED, GAVE_UP, EventFaces, detect_event_faces
+from .gallery import FACE_EVENT_DELETED, audit
 from .frigate_client import FrigateClient, FrigateError, PersonEvent
 from .inference_client import InferenceClient, InferenceUnavailable
 from .media import MediaStore
@@ -68,22 +69,27 @@ class Ingestor:
     embed_failures: set[str] = field(default_factory=set)  # reference faces that could not be embedded
     _last_problem: str | None = None
 
-    async def _gallery(self) -> tuple[bool, recognition.Gallery | None]:
-        """(switch on, gallery to match against or None when recognition cannot run this poll)."""
-        with self.sessions() as db:
-            enabled = recognition.is_enabled(db)
-        if not enabled or self.cipher is None or self.gallery_store is None:
-            return enabled, None
+    async def _prepare_recognition(self) -> str | None:
+        """Once per poll, when recognition is on: the embedder id, after embedding pending references."""
         embedder, status = await recognition.current_embedder(self.inference)
         if embedder is None:
             log.info("Recognition is on but the embedder is not ready (%s); detection only", status)
-            return True, None
+            return None
         try:
             await recognition.embed_missing_references(self.sessions, self.inference, self.cipher, self.gallery_store,
                                                        self.settings, embedder, self.embed_failures)
         except InferenceUnavailable as exc:
             log.info("Recognition is on but reference faces cannot be embedded now (%s); detection only", exc)
-            return True, None
+            return None
+        return embedder
+
+    def _switch_and_gallery(self, embedder: str | None) -> tuple[bool, recognition.Gallery | None]:
+        """Read before every event, so switching off, deactivating or deleting someone applies to the
+        very next event, not the next poll (privacy review, Phase 8)."""
+        with self.sessions() as db:
+            enabled = recognition.is_enabled(db)
+        if not enabled or embedder is None:
+            return enabled, None
         return True, recognition.load_gallery(self.sessions, self.cipher, embedder)
 
     def _cursor(self) -> float:
@@ -111,8 +117,8 @@ class Ingestor:
     async def ingest_once(self) -> IngestStats:
         stats = IngestStats()
         after, offset = self._cursor(), 0
-        gallery: recognition.Gallery | None = None
-        enabled = prepared = False
+        embedder: str | None = None
+        prepared = False  # _prepare_recognition ran in this poll
         for _ in range(MAX_PAGES_PER_POLL):
             try:
                 events, returned = await self.frigate.person_events_page(after, PAGE_SIZE, offset)
@@ -131,9 +137,12 @@ class Ingestor:
                     self._problem(str(exc))
                     stats.stopped = "insufficient_storage"
                     return stats
-                if not prepared:  # once per poll, and only when there is a new event to analyse
-                    enabled, gallery = await self._gallery()
+                with self.sessions() as db:
+                    switched_on = recognition.is_enabled(db)
+                if switched_on and not prepared and self.cipher is not None and self.gallery_store is not None:
+                    embedder = await self._prepare_recognition()  # once per poll, only when needed
                     prepared = True
+                enabled, gallery = self._switch_and_gallery(embedder)
                 result = await self._detect(event, gallery is not None)
                 if result is None:
                     stats.stopped = "temporary_failure"
@@ -248,11 +257,12 @@ class Ingestor:
                 log.warning("Could not remove face image %s: %s", name, exc)
 
 
-def delete_face_event(sessions: sessionmaker, store: MediaStore, event_id: str) -> bool:
+def delete_face_event(sessions: sessionmaker, store: MediaStore, event_id: str, username: str | None = None) -> bool:
     """Delete a face event: its files first, then the rows (detections cascade).
 
     False if it does not exist. A file that cannot be removed keeps the event, so
-    nothing is orphaned on disk (raises OSError).
+    nothing is orphaned on disk (raises OSError). With `username` (an operator's
+    deletion, not retention) the deletion is audited in the same commit.
     """
     with sessions() as db:
         event = db.get(FaceEvent, event_id)
@@ -266,6 +276,8 @@ def delete_face_event(sessions: sessionmaker, store: MediaStore, event_id: str) 
                 pass  # not a name we generate: no file of ours
         db.execute(delete(FaceDetection).where(FaceDetection.event_id == event_id))
         db.execute(delete(FaceEvent).where(FaceEvent.id == event_id))
+        if username:
+            audit(db, username, FACE_EVENT_DELETED, "face_event", event_id)
         db.commit()
     return True
 

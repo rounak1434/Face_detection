@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
-from ..db import FaceDetection, FaceEvent, Person, as_utc
+from ..db import AdminUser, FaceDetection, FaceEvent, Person, as_utc
 from ..deps import AppState, current_user, get_db, get_state
 from ..face_detection import FACE_EVENT_STATUSES
 from ..face_events import delete_face_event
@@ -202,11 +202,13 @@ def face_detection_crop(event_id: str, detection_id: str, db: Session = Depends(
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_face_event_route(event_id: str, db: Session = Depends(get_db), state: AppState = Depends(get_state)) -> None:
+def delete_face_event_route(event_id: str, db: Session = Depends(get_db), state: AppState = Depends(get_state),
+                            user: AdminUser = Depends(current_user)) -> None:
     event = _get(db, event_id)
+    username = user.username
     db.close()  # the deletion runs in its own session
     try:
-        found = delete_face_event(state.db.sessionmaker, state.face_store, event.id)
+        found = delete_face_event(state.db.sessionmaker, state.face_store, event.id, username)
     except OSError as exc:
         log.warning("Face event %s: an image could not be removed: %s", event_id, exc)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -214,4 +216,4 @@ def delete_face_event_route(event_id: str, db: Session = Depends(get_db), state:
                             "the face event is kept") from None
     if not found:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
-    log.info("Face event %s deleted", event_id)
+    log.info("Face event %s deleted by %s", event_id, username)

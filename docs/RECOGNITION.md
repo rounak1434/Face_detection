@@ -34,11 +34,13 @@ Four photos of three people is a sanity check, not an accuracy measurement. Acce
   2. computes embeddings for reference faces that have none yet (for example those enrolled before SFace was installed);
   3. is refused (409 `gallery_empty`) if no active person then has a usable embedding.
 - Every change is written to the audit log with the thresholds in force.
+- The switch and the gallery are read before **every** event, so switching off, deactivating or deleting a person applies to the very next event analysed.
 - **Off**: face events are analysed by the detector only (`/v1/detect`); no embedding is computed and faces are stored as `NOT_MATCHED`. **On**: each new event goes through `/v1/embed` and every face is matched. If SFace becomes unavailable while on, events are still analysed for faces and marked `recognition_state: unavailable`.
 
 ## Privacy
 - Reference embeddings are stored **AES-256-GCM encrypted** with the credentials key, like the reference images, and never leave the server.
 - **Event embeddings are not stored**: they are matched in memory and discarded; only the outcome, the similarity, the thresholds used and the matched person are kept, under the face-event retention (`FACE_EVENT_RETENTION_DAYS`, default 30).
+- Deleted rows are overwritten in the database (`secure_delete`). Deleted files are unlinked, not overwritten, and Frigate keeps its own snapshots and recordings: see the known limits in [VERIFICATION.md](VERIFICATION.md) (Phase 8). Use full-disk encryption on the host.
 - Deleting a person removes their images and embeddings and **unlinks past matches**: those faces stay `AUTHORIZED` with their similarity (it was true at the time), but no longer name anyone.
 
 ## Settings

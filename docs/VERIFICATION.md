@@ -266,6 +266,42 @@ Backend: Windows **587 passed, 10 skipped**; Linux (fresh clone of `3241aba` + t
 | Manual, real services | Windows: the real api on a throwaway database in the scratchpad, the real inference service with YuNet and SFace, and the Vite dev server, in the built-in browser. Seeded face events (frames are the public-domain fixtures; their outcomes were seeded, not computed) listed and opened: frame and crop loaded through the signed-in routes, box at 49.17 % (236 of 480 px). A person created through the form; a blank image uploaded through the page's file input was refused by the real detector ("No face was found"); the Armstrong 1964 portrait enrolled through the same API route was embedded by the real SFace and shown as "Ready to match"; recognition switched on through the dialog after a refused wrong password; the audit log showed all four steps. At 375 px width both pages fit without horizontal scrolling (after the fix below) | passed. Screenshots were not possible (the app window was hidden); checks were made on the page's DOM |
 | Defects found by the manual run | Consent date defaulted to the UTC date and capped the picker (local date now, with a test); "1 active people" (plurals fixed); audit ids widened the page on phones (cells wrap) | fixed |
 
+## Face integration, Phase 8: security and privacy review, 2026-10-30, base `c13adb6`
+Scope: everything added for faces (Phases 2–7) plus the parts it relies on (sign-in, lockout, media store, encryption, proxy). Method: read every log call, response builder, deletion and retention path; then regression tests for each finding and two sweeps over all routes (`backend/tests/unit/test_privacy_review.py`, 8 tests). Every finding's test failed before its fix.
+
+### Findings (fixed)
+| # | Finding | Fix | Regression test |
+|---|---|---|---|
+| 1 | The recognition switch and the gallery were read once per poll (up to 1,000 events). Switching recognition **off**, deactivating or deleting a person during a poll still matched the rest of that poll's events; switching on during a poll was ignored until the next one. | The switch is read and the gallery reloaded before every event; only embedding pending references stays once per poll. | `test_switching_off_mid_poll_stops_matching_at_the_next_event` (later events `off`/`NOT_MATCHED`, `/v1/embed` called once), `test_deactivating_a_person_mid_poll_stops_their_matches`, `test_switching_on_mid_poll_starts_matching` |
+| 2 | SQLite keeps deleted rows in free pages: after deleting a person, their name and consent note (and the encrypted embeddings) were still readable in `app.db`. | `PRAGMA secure_delete=ON` on every connection: deleted content is overwritten with zeros. | `test_deleted_person_is_not_left_in_free_pages` (marker absent from `app.db` and WAL after checkpoint), `test_secure_delete_is_on` |
+| 3 | Deleting a face event (frame and face crops) was not in the audit log. | Audited as `face_event_deleted` with the username, in the same commit as the deletion; retention deletions stay in the server log only. | `test_face_event_deletion_is_audited` |
+
+### Checklist
+| Area | Check | Result |
+|---|---|---|
+| Sign-in | Every route except health, login, me and logout answers 401 without a session (sweep over the OpenAPI schema, 30+ routes) | pass (`test_every_route_except_the_public_ones_needs_sign_in`) |
+| Sensitive changes | Deleting a person and switching recognition need the password again; failures audited and counted towards the sign-in lockout (5 per client, 5 minutes); 403 keeps the session | pass (Phase 5/6 tests) |
+| Client identity behind the proxy | The api runs with `--proxy-headers`, so the lockout keys on the real client address from Caddy. Port 8000 is published to nobody; only containers on the internal network could forge the header | accepted |
+| Responses | After enrolling, switching on and matching an event, no list or detail route returns server file names, the media path, `.enc`, `embedding`/`embedding_enc` or embedding bytes | pass (`test_responses_never_carry_files_paths_or_embeddings`) |
+| Images | Frames, crops and reference images only through signed-in routes, `Cache-Control: private, no-store`; Caddy adds `X-Content-Type-Options: nosniff`, CSP `default-src 'self'`, no framing; media types are set by the server from the bytes | pass |
+| Logs | Face, gallery and recognition logs carry ids, usernames, counts and error codes only: no names, notes, consent text, passwords or embeddings. Storage paths appear only in server-log lines about file errors, never in responses. Uvicorn access logs contain URL ids and filter values | pass |
+| Encryption at rest | Reference images and embeddings AES-256-GCM, bound to the face id; event embeddings never stored | pass (Phase 5/6 tests) |
+| Deletion | Person: images, embeddings and rows, past matches unlinked, rows overwritten (finding 2). Face event: files then rows, audited (finding 3). Failed file removal keeps the row for another try | pass |
+| Retention | Face events 30 days (rows and files, hourly). Gallery until deleted (owner's decision). Login sessions purged at start | pass |
+| Recognition off | No embedding computed or matched, from the next event on (finding 1) | pass |
+| No enrollment from footage | Only an upload can enroll (OpenAPI check, Phase 5) | pass |
+| CSRF | Session cookie `SameSite=Strict`, httpOnly, Secure | pass |
+
+### Known limits (not fixed; documented for the operator)
+- **Deleted files are unlinked, not overwritten.** Face-event frames and crops are plain JPEGs; on an SSD their blocks may stay readable until reused (reference images are encrypted, so this matters less there). Use full-disk encryption on the Ubuntu host (for example LUKS at installation).
+- **Frigate keeps its own copies.** In our template Frigate keeps event snapshots 14 days and recordings 3 days (`deploy/frigate/config.yml`). Deleting a face event or a person here does not touch them.
+- **Backups keep deleted data.** Automatic pre-migration backups, manual `db backup` copies and any copy of `media/` keep people deleted later, until those backups are deleted.
+- **The audit log has no retention**; it holds usernames, actions and ids only.
+- **Viewing images is not audited** (only changes are). There is one administrator account, without roles.
+- **No liveness check**; recognition thresholds are not measured on the real camera (RECOGNITION.md).
+
+Backend: Windows **595 passed, 10 skipped**; Linux (fresh clone of `c13adb6` + this change) **601 passed, 4 skipped**, real-model tests **5 passed**, review, recognition and face-event tests 3/3 repeats; inference 64 + 4 real SFace passed; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

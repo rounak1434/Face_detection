@@ -28,6 +28,7 @@ FACE_DELETED = "reference_face_deleted"
 PASSWORD_CONFIRMATION_FAILED = "password_confirmation_failed"
 RECOGNITION_ENABLED = "recognition_enabled"
 RECOGNITION_DISABLED = "recognition_disabled"
+FACE_EVENT_DELETED = "face_event_deleted"  # by an operator; retention deletions are logged, not audited
 
 
 def audit(db: Session, username: str, action: str, target_type: str | None = None, target_id: str | None = None,
