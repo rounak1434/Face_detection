@@ -13,8 +13,8 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from .. import devices as dev
 from ..credentials import CredentialError
 from ..db import Device, as_utc, utcnow
 from ..deps import AppState, current_user, get_db, get_state
+from ..frigate_config import MAX_DEVICES as MAX_FRIGATE_DEVICES
 from ..netguard import AddressNotAllowed, check_ip, parse_networks, validate_host_syntax
 
 router = APIRouter(prefix="/api/devices", tags=["devices"], dependencies=[Depends(current_user)])
@@ -125,6 +126,7 @@ def to_dict(d: Device) -> dict:
         "tested_at": _iso(d.tested_at),
         "streams": streams,
         "editable": d.kind != "synthetic",
+        "use_in_frigate": d.use_in_frigate,
     }
 
 
@@ -208,6 +210,37 @@ def update_device(device_id: str, body: DeviceIn, db: Session = Depends(get_db),
     device.updated_at = utcnow()
     _commit(db)
     log.info("Device %s updated", device.id)
+    return to_dict(device)
+
+
+class FrigateUseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    use_in_frigate: StrictBool
+
+
+@router.put("/{device_id}/frigate")
+def set_use_in_frigate(device_id: str, body: FrigateUseIn, db: Session = Depends(get_db)) -> dict:
+    """Approve or withdraw a device for "Apply to Frigate" (ADR-0003). Nothing reaches Frigate here.
+
+    Switching on needs a successful connection test. A device whose settings
+    change later is reset to "not tested" and skipped by the apply until it
+    passes a test again; the switch itself stays as the operator set it.
+    """
+    device = _get(db, device_id)
+    if body.use_in_frigate and not device.use_in_frigate:
+        if device.status != dev.CONNECTED:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Test the connection successfully before using this device in Frigate")
+        approved = db.scalar(select(func.count()).select_from(Device).where(Device.use_in_frigate.is_(True)))
+        if approved >= MAX_FRIGATE_DEVICES:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"At most {MAX_FRIGATE_DEVICES} devices can be used in Frigate")
+    if device.use_in_frigate != body.use_in_frigate:
+        device.use_in_frigate = body.use_in_frigate
+        device.updated_at = utcnow()
+        db.commit()
+        log.info("Device %s %s for Frigate", device.id, "approved" if body.use_in_frigate else "withdrawn")
     return to_dict(device)
 
 

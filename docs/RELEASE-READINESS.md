@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `76765c4`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-29, base commit `ad84acc`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -21,7 +21,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | Age, expression, glasses, beard, mask estimates (milestone 3) | **Missing** | No models in the registry. Must be shown as fallible estimates only. |
 | Event history (milestone 3), Frigate MQTT events | **Missing** | No MQTT broker in compose, no event tables. |
 | Alerts and alarm output (milestone 4) | **Missing** | No code; must be verified on the real hardware first. |
-| Database migrations | Done (verified) | Alembic baseline; `test_migrations.py` (24). |
+| Database migrations | Done (verified) | Alembic baseline plus `0002_device_use_in_frigate`; `test_migrations.py` (26). |
 | Backup, verify, restore, interruption handling, recovery copies | Done (verified: Windows + Linux/WSL) | `dbtools.py`; `test_dbtools.py` (79); 41-check drill. Power loss and real signals: not shown. |
 | Configuration and secrets | Done (tests only) | pydantic settings; `.env` gitignored; per-service env lists in compose; api ↔ inference bearer token (`INFERENCE_API_TOKEN`); `test_deploy_config.py`, `test_inference_token.py`. |
 | Health checks | Partial | api (compose) and inference (Dockerfile) have health checks; none is defined for frigate or web in this repository (whether their images ship one is unchecked). |
@@ -41,7 +41,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | 5 | Reliability | Health checks for frigate and web; `depends_on: condition: service_healthy` where useful | `docker compose ps` shows health for all services | `deploy/compose.yaml`, `test_deploy_config.py` | static test; host check Blocked |
 | 6 | Release | **Done 2026-10-29:** CI: backend, inference, frontend tests and build on push; add `ruff` | Workflow green on the branch | `.github/workflows/ci.yml`, `pyproject.toml` | the workflow itself |
 | 7 | UX (low) | Move the side effect out of the `setUser` updater in `App.tsx` | Session-expired notice shown once under StrictMode | `App.tsx` | `session.test.tsx` |
-| 8 | Feature (M1 gap) | Feed saved devices to Frigate. **Design accepted in [ADR-0003](adr/0003-saved-devices-to-frigate.md)** (Frigate 0.18.2 API checked in source; option A). Steps 1–2 of 5 done (config renderer with placeholders only; secret-file writer: atomic, owner-only, stale files removed, snapshot and restore); next: "Use in Frigate" flag, the Apply endpoint with rollback, Compose and docs | A saved, tested device appears as a Frigate camera without editing `.env` | `devices.py`, Frigate config generation, docs | unit tests; Blocked for the real NVR |
+| 8 | Feature (M1 gap) | Feed saved devices to Frigate. **Design accepted in [ADR-0003](adr/0003-saved-devices-to-frigate.md)** (Frigate 0.18.2 API checked in source; option A). Steps 1–3 of 5 done (config renderer with placeholders only; secret-file writer: atomic, owner-only, stale files removed, snapshot and restore; "Use in Frigate" switch: migration `0002`, API, UI, only for connected devices); next: the Apply endpoint with rollback, Compose and docs | A saved, tested device appears as a Frigate camera without editing `.env` | `devices.py`, Frigate config generation, docs | unit tests; Blocked for the real NVR |
 | 9 | Feature (M2) | Recognition engine evaluation, then enrollment with consent, matching (`AUTHORIZED`/`UNRECOGNIZED`/`INCONCLUSIVE`/`SYSTEM_ERROR`) | Per ADR-0001; needs a decision and test footage | new modules, migrations | large; plan separately |
 | 10 | Feature (M3/M4) | Events with MQTT, attribute estimates, alerts and alarm output | Per ARCHITECTURE milestones; alarm only after hardware verification | new | plan separately |
 

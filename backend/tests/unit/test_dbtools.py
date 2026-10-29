@@ -39,7 +39,7 @@ def _usernames(path: Path) -> list[str]:
 def test_backup_is_verified_and_consistent(live):
     dest, result = dbtools.backup(live)
     assert dest.name.startswith("app.db.manual-") and dest.suffix == ".bak"
-    assert result["ok"] and result["integrity"] == "ok" and result["revision"] == "0001_baseline"
+    assert result["ok"] and result["integrity"] == "ok" and result["revision"] == "0002_device_use_in_frigate"
     assert _usernames(dest) == ["admin"]
 
 

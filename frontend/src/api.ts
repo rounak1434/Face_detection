@@ -69,6 +69,7 @@ export type Device = {
   tested_at: string | null;
   streams: Partial<Record<"main" | "sub", StreamTest>>;
   editable: boolean;
+  use_in_frigate: boolean;
 };
 
 export type DeviceInput = {
@@ -207,6 +208,11 @@ export const api = {
     request<Device>(`/api/devices/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
   deleteDevice: (id: string) => request<void>(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   testDevice: (id: string) => request<Device>(`/api/devices/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  setUseInFrigate: (id: string, useInFrigate: boolean) =>
+    request<Device>(`/api/devices/${encodeURIComponent(id)}/frigate`, {
+      method: "PUT",
+      body: JSON.stringify({ use_in_frigate: useInFrigate }),
+    }),
   addSynthetic: () => request<Device>("/api/devices/synthetic", { method: "POST" }),
   models: () => request<ModelsResponse>("/api/models"),
   // Multipart upload, field "file". The server ignores the file name and checks the bytes.

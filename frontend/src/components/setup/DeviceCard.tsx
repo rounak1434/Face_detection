@@ -7,7 +7,15 @@ type Props = {
   onTest: () => void;
   onEdit?: () => void;
   onRemove: () => void;
+  onUseInFrigate: (value: boolean) => void;
 };
+
+function frigateHint(device: Device) {
+  const connected = device.status === "connected";
+  if (device.use_in_frigate && !connected) return "Skipped when applying to Frigate until a connection test passes again.";
+  if (!device.use_in_frigate && !connected) return "Available after a successful connection test.";
+  return "Takes effect only when the configuration is applied to Frigate.";
+}
 
 function streamLine(label: string, url: string, test?: StreamTest) {
   return (
@@ -25,7 +33,8 @@ function streamLine(label: string, url: string, test?: StreamTest) {
   );
 }
 
-export function DeviceCard({ device, testing, onTest, onEdit, onRemove }: Props) {
+export function DeviceCard({ device, testing, onTest, onEdit, onRemove, onUseInFrigate }: Props) {
+  const canSwitchOn = device.status === "connected";
   return (
     <article className="device" aria-label={device.name}>
       <header className="device-head">
@@ -43,6 +52,15 @@ export function DeviceCard({ device, testing, onTest, onEdit, onRemove }: Props)
         {device.tested_at ? `last tested ${new Date(device.tested_at).toLocaleString()}` : "never tested"}
       </p>
       {device.status_detail && <p className="small detail">{device.status_detail}</p>}
+      <div className="frigate-use">
+        <label>
+          <input type="checkbox" checked={device.use_in_frigate}
+            disabled={!device.use_in_frigate && !canSwitchOn}
+            onChange={(e) => onUseInFrigate(e.target.checked)} />{" "}
+          Use in Frigate
+        </label>
+        <span className="muted small">{frigateHint(device)}</span>
+      </div>
       <div className="actions">
         <button onClick={onTest} disabled={testing}>{testing ? "Testing…" : "Test connection"}</button>
         {onEdit && <button className="secondary" onClick={onEdit}>Edit</button>}

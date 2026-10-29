@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, false
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -83,6 +83,8 @@ class Device(Base):
     tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Operator approval for "Apply to Frigate" (ADR-0003); applied only while status is "connected".
+    use_in_frigate: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 def make_engine(database_url: str) -> Engine:

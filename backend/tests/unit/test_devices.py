@@ -332,3 +332,93 @@ def test_synthetic_source_unreachable_without_stack(signed_in, monkeypatch):
     body = signed_in.post("/api/devices/synthetic").json()
     result = signed_in.post(f"/api/devices/{body['id']}/test").json()
     assert result["status"] == "unreachable"
+
+
+# --- "Use in Frigate" approval (ADR-0003) ------------------------------------
+
+def _frigate(client, device_id, value):
+    return client.put(f"/api/devices/{device_id}/frigate", json={"use_in_frigate": value})
+
+
+def _connected(client, **overrides):
+    device = _create(client, **overrides).json()
+    assert client.post(f"/api/devices/{device['id']}/test").json()["status"] == "connected"
+    return device
+
+
+def test_use_in_frigate_requires_login(client):
+    assert _frigate(client, "a" * 32, True).status_code == 401
+
+
+def test_new_device_is_not_used_in_frigate(signed_in):
+    assert _create(signed_in).json()["use_in_frigate"] is False
+
+
+def test_untested_or_failed_device_cannot_be_switched_on(signed_in, net):
+    device = _create(signed_in).json()
+    resp = _frigate(signed_in, device["id"], True)
+    assert resp.status_code == 409
+    assert "Test the connection" in resp.json()["detail"]
+    net.probe_result = ProbeResult("x", False, [], [], "method DESCRIBE failed: 401 Unauthorized")
+    signed_in.post(f"/api/devices/{device['id']}/test")
+    assert _frigate(signed_in, device["id"], True).status_code == 409
+    assert signed_in.get("/api/devices").json()[0]["use_in_frigate"] is False
+
+
+def test_connected_device_can_be_switched_on_and_off(signed_in, net):
+    device = _connected(signed_in)
+    body = _frigate(signed_in, device["id"], True).json()
+    assert body["use_in_frigate"] is True
+    assert signed_in.get("/api/devices").json()[0]["use_in_frigate"] is True
+    assert _frigate(signed_in, device["id"], True).json()["use_in_frigate"] is True  # idempotent
+    assert _frigate(signed_in, device["id"], False).json()["use_in_frigate"] is False
+
+
+def test_switching_off_is_always_allowed(signed_in, net):
+    device = _connected(signed_in)
+    _frigate(signed_in, device["id"], True)
+    net.tcp_open = False
+    signed_in.post(f"/api/devices/{device['id']}/test")
+    assert _frigate(signed_in, device["id"], False).json()["use_in_frigate"] is False
+
+
+def test_edit_resets_the_test_but_keeps_the_switch(signed_in, net):
+    """The apply skips a device that is not connected, so the switch can stay as set."""
+    device = _connected(signed_in)
+    _frigate(signed_in, device["id"], True)
+    update = {**VALID, "password": None, "main_stream": "/other"}
+    body = signed_in.put(f"/api/devices/{device['id']}", json=update).json()
+    assert (body["status"], body["use_in_frigate"]) == ("not_tested", True)
+
+
+@pytest.mark.parametrize("payload", [{}, {"use_in_frigate": "yes"}, {"use_in_frigate": 1},
+                                     {"use_in_frigate": None}, {"use_in_frigate": True, "name": "x"}])
+def test_use_in_frigate_body_is_validated(signed_in, net, payload):
+    device = _connected(signed_in)
+    resp = signed_in.put(f"/api/devices/{device['id']}/frigate", json=payload)
+    assert resp.status_code == 422
+    assert signed_in.get("/api/devices").json()[0]["use_in_frigate"] is False
+
+
+def test_use_in_frigate_unknown_device(signed_in):
+    assert _frigate(signed_in, "a" * 32, False).status_code == 404
+
+
+def test_number_of_frigate_devices_is_limited(signed_in, net, monkeypatch):
+    from ai_surveillance.routes import devices as routes
+
+    monkeypatch.setattr(routes, "MAX_FRIGATE_DEVICES", 2)
+    ids = [_connected(signed_in, name=f"Cam {i}", host=f"192.168.1.{20 + i}")["id"] for i in range(3)]
+    assert _frigate(signed_in, ids[0], True).status_code == 200
+    assert _frigate(signed_in, ids[1], True).status_code == 200
+    resp = _frigate(signed_in, ids[2], True)
+    assert resp.status_code == 409 and "At most 2" in resp.json()["detail"]
+    assert _frigate(signed_in, ids[0], True).status_code == 200  # already on: not counted twice
+    _frigate(signed_in, ids[0], False)
+    assert _frigate(signed_in, ids[2], True).status_code == 200
+
+
+def test_use_in_frigate_response_contains_no_secret(signed_in, net):
+    device = _connected(signed_in)
+    resp = _frigate(signed_in, device["id"], True)
+    assert SECRET not in resp.text and "viewer:" not in resp.text

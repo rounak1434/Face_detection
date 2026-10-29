@@ -24,6 +24,7 @@ from ai_surveillance.migrations import (
     alembic_config,
     current_revision,
     head_revision,
+    legacy_schema_differences,
     status,
 )
 
@@ -40,18 +41,36 @@ def db(db_path):
     database.engine.dispose()
 
 
+def _create_baseline(engine) -> None:
+    """The pre-migration schema (what create_all wrote then; 0001_baseline reproduces it), unversioned.
+
+    Later revisions change the models, so create_all no longer gives the legacy schema.
+    """
+    command.upgrade(alembic_config(engine), BASELINE)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
+
+
+def _insert_legacy_rows(engine) -> None:
+    """One record per table, in baseline columns only (plain SQL: the models have newer columns)."""
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO admin_users (id, username, password_hash, created_at) "
+                          "VALUES ('u1', 'admin', 'argon2-hash', '2026-10-01 00:00:00')"))
+        conn.execute(text("INSERT INTO login_sessions (token_hash, user_id, expires_at) "
+                          "VALUES (:token, 'u1', '2026-10-02 00:00:00')"), {"token": "a" * 64})
+        conn.execute(text("INSERT INTO captures (id, camera, kind, status, created_at, file_name) "
+                          "VALUES ('c1', 'entrance', 'snapshot', 'ready', '2026-10-01 00:00:00', :file)"),
+                     {"file": "b" * 32 + ".jpg"})
+        conn.execute(text("INSERT INTO devices (id, name, kind, host, rtsp_port, password_enc, main_path, status, "
+                          "created_at, updated_at) VALUES (:id, 'Gate NVR', 'nvr', '192.168.1.20', 554, "
+                          "'v1:ciphertext', '/live', 'connected', '2026-10-01 00:00:00', '2026-10-01 00:00:00')"),
+                     {"id": "d" * 32})
+
+
 def _legacy_with_data(db: Database) -> None:
     """A database as the pre-migration code created it, with records in every table."""
-    Base.metadata.create_all(db.engine)
-    with db.sessionmaker() as s:
-        user = AdminUser(username="admin", password_hash="argon2-hash")
-        s.add(user)
-        s.flush()
-        s.add(LoginSession(token_hash="a" * 64, user_id=user.id, expires_at=user.created_at))
-        s.add(Capture(camera="entrance", kind="snapshot", status="ready", file_name="b" * 32 + ".jpg"))
-        s.add(Device(name="Gate NVR", kind="nvr", host="192.168.1.20", rtsp_port=554, main_path="/live",
-                     password_enc="v1:ciphertext"))
-        s.commit()
+    _create_baseline(db.engine)
+    _insert_legacy_rows(db.engine)
 
 
 def _backups(db_path: Path) -> list[Path]:
@@ -79,9 +98,35 @@ def test_models_match_migrations(db):
     assert diff == []
 
 
-def test_baseline_schema_constant_matches_models():
+def test_baseline_schema_constant_matches_the_baseline_revision(db):
+    _create_baseline(db.engine)
+    insp = inspect(db.engine)
     for table, columns in BASELINE_SCHEMA.items():
-        assert {c.name for c in Base.metadata.tables[table].columns} == columns
+        assert {c["name"] for c in insp.get_columns(table)} == columns
+
+
+def test_upgrade_from_baseline_keeps_devices_and_leaves_them_out_of_frigate(db):
+    _create_baseline(db.engine)
+    _insert_legacy_rows(db.engine)
+    command.stamp(alembic_config(db.engine), BASELINE)
+    assert db.migrate() == "upgraded"
+    with db.sessionmaker() as s:
+        device = s.query(Device).one()
+        assert (device.name, device.password_enc, device.status) == ("Gate NVR", "v1:ciphertext", "connected")
+        assert device.use_in_frigate is False
+
+
+def test_downgrade_to_baseline_keeps_device_rows(db):
+    db.migrate()
+    with db.sessionmaker() as s:
+        s.add(Device(name="Gate NVR", kind="nvr", host="192.168.1.20", rtsp_port=554, main_path="/live",
+                     password_enc="v1:ciphertext", use_in_frigate=True))
+        s.commit()
+    command.downgrade(alembic_config(db.engine), BASELINE)
+    assert "use_in_frigate" not in {c["name"] for c in inspect(db.engine).get_columns("devices")}
+    assert legacy_schema_differences(db.engine) == []
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT name, password_enc FROM devices")).all() == [("Gate NVR", "v1:ciphertext")]
 
 
 def test_legacy_database_with_data_is_verified_backed_up_and_stamped(db, db_path):
@@ -143,7 +188,7 @@ def _legacy_ddl() -> dict[str, str]:
 
     with tempfile.TemporaryDirectory() as d:
         engine = create_engine(f"sqlite:///{d}/ddl.db")
-        Base.metadata.create_all(engine)
+        _create_baseline(engine)
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT name, sql FROM sqlite_master WHERE type='table'")).all()
         engine.dispose()

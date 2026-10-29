@@ -15,6 +15,11 @@ The api runs `upgrade_to_head` automatically. The result depends on the database
 
 `0001_baseline` creates exactly what the pre-migration code created with SQLAlchemy `create_all`: `admin_users`, `login_sessions`, `captures`, `devices`. This was checked against a real pre-migration database file. Phase 1 adds no business tables.
 
+Later revisions:
+| Revision | Change | Downgrade |
+|---|---|---|
+| `0002_device_use_in_frigate` | `devices.use_in_frigate` (boolean, not null, default false): the operator's "Use in Frigate" approval (ADR-0003). Existing devices start switched off. | Drops the column; device rows are kept |
+
 SQLite runs with `journal_mode=WAL`, `busy_timeout=5000` ms and `foreign_keys=ON`.
 
 ## Files in the `api-data` volume

@@ -27,7 +27,7 @@ const nvr: Device = {
   id: "d1", name: "Gate NVR", kind: "nvr", source_label: "NVR (real device)", host: "192.168.1.20", rtsp_port: 554,
   username: "viewer", has_password: true, main_stream: "/cam/realmonitor?channel=1&subtype=0", sub_stream: null,
   main_url_display: "rtsp://***@192.168.1.20:554/cam/realmonitor?channel=1&subtype=0", sub_url_display: null,
-  status: "not_tested", status_detail: null, tested_at: null, streams: {}, editable: true,
+  status: "not_tested", status_detail: null, tested_at: null, streams: {}, editable: true, use_in_frigate: false,
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -122,6 +122,58 @@ describe("SetupPage", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.queryByRole("article", { name: "Gate NVR" })).not.toBeInTheDocument());
     expect(calls.some((c) => c.method === "DELETE" && c.path === "/api/devices/d1")).toBe(true);
+  });
+
+  it("offers Use in Frigate only after a successful test", async () => {
+    mockFetch(() => ({ status: 200, body: [nvr] }));
+    render(<SetupPage />);
+    const card = await screen.findByRole("article", { name: "Gate NVR" });
+    const box = within(card).getByRole("checkbox", { name: "Use in Frigate" });
+    expect(box).not.toBeChecked();
+    expect(box).toBeDisabled();
+    expect(within(card).getByText("Available after a successful connection test.")).toBeInTheDocument();
+  });
+
+  it("switches Use in Frigate on through the API", async () => {
+    const connected = { ...nvr, status: "connected" };
+    const calls = mockFetch((method) =>
+      method === "PUT" ? { status: 200, body: { ...connected, use_in_frigate: true } } : { status: 200, body: [connected] });
+    render(<SetupPage />);
+    const card = await screen.findByRole("article", { name: "Gate NVR" });
+    const box = within(card).getByRole("checkbox", { name: "Use in Frigate" });
+    expect(box).toBeEnabled();
+    fireEvent.click(box);
+    await waitFor(() => expect(box).toBeChecked());
+    const put = calls.find((c) => c.method === "PUT")!;
+    expect(put.path).toBe("/api/devices/d1/frigate");
+    expect(put.body).toEqual({ use_in_frigate: true });
+    expect(within(card).getByText(/Takes effect only when the configuration is applied/)).toBeInTheDocument();
+  });
+
+  it("lets an approved device that is no longer connected be switched off, and says it is skipped", async () => {
+    const stale = { ...nvr, status: "unreachable", use_in_frigate: true };
+    const calls = mockFetch((method) =>
+      method === "PUT" ? { status: 200, body: { ...stale, use_in_frigate: false } } : { status: 200, body: [stale] });
+    render(<SetupPage />);
+    const card = await screen.findByRole("article", { name: "Gate NVR" });
+    expect(within(card).getByText(/Skipped when applying to Frigate/)).toBeInTheDocument();
+    const box = within(card).getByRole("checkbox", { name: "Use in Frigate" });
+    expect(box).toBeEnabled();
+    fireEvent.click(box);
+    await waitFor(() => expect(box).not.toBeChecked());
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ use_in_frigate: false });
+  });
+
+  it("shows the server's refusal and keeps the switch off", async () => {
+    const connected = { ...nvr, status: "connected" };
+    mockFetch((method) =>
+      method === "PUT" ? { status: 409, body: { detail: "At most 32 devices can be used in Frigate" } }
+        : { status: 200, body: [connected] });
+    render(<SetupPage />);
+    const card = await screen.findByRole("article", { name: "Gate NVR" });
+    fireEvent.click(within(card).getByRole("checkbox", { name: "Use in Frigate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Gate NVR: At most 32 devices can be used in Frigate");
+    expect(within(card).getByRole("checkbox", { name: "Use in Frigate" })).not.toBeChecked();
   });
 
   it("starts the webcam only on request, through the browser API", async () => {

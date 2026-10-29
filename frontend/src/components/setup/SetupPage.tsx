@@ -48,6 +48,15 @@ export function SetupPage() {
     }
   };
 
+  const setUseInFrigate = async (d: Device, value: boolean) => {
+    setError(null);
+    try {
+      replace(await api.setUseInFrigate(d.id, value));
+    } catch (err) {
+      setError(`${d.name}: ${(err as Error).message}`);
+    }
+  };
+
   const remove = async (d: Device) => {
     if (!window.confirm(`Remove "${d.name}"? Its stored credentials are deleted.`)) return;
     try {
@@ -72,7 +81,8 @@ export function SetupPage() {
 
   const card = (d: Device) => (
     <DeviceCard key={d.id} device={d} testing={testing === d.id} onTest={() => test(d)}
-      onEdit={d.editable ? () => setEditing({ mode: "edit", device: d }) : undefined} onRemove={() => remove(d)} />
+      onEdit={d.editable ? () => setEditing({ mode: "edit", device: d }) : undefined} onRemove={() => remove(d)}
+      onUseInFrigate={(value) => setUseInFrigate(d, value)} />
   );
 
   return (
@@ -81,6 +91,8 @@ export function SetupPage() {
       <p className="notice">
         Saving a device here stores and tests its connection. The engine does not yet stream saved devices
         automatically: the live view still uses the streams configured in <code>deploy/.env</code> (see SETUP.md).
+        &quot;Use in Frigate&quot; only marks a tested device for the coming &quot;Apply to Frigate&quot; step; it changes
+        nothing in Frigate yet.
         A device shows <strong>Connected</strong> only after a test in which the server actually decoded video
         from it.
       </p>
