@@ -164,6 +164,31 @@ Lifecycle: the previous config is kept in `frigate-config.previous.yml` plus at 
 
 Results: backend Windows **444 passed, 6 skipped**; Linux (fresh clone of `ecb8596` + this change) **449 passed, 1 skipped**, apply tests 3/3 repeats; `ruff` clean.
 
+## Secret handling review (Task C), 2026-10-29, base `2d98ff2`
+Review of where a camera password travels; unit, in-process and static tests only (no real Frigate, Docker or volume).
+
+| Stage | What protects it | Evidence |
+|---|---|---|
+| Browser → api | HTTPS (Caddy); password write-only, never returned; session cookie `HttpOnly`, `SameSite=strict`, so other sites cannot trigger Apply | `test_password_is_never_returned`, `routes/auth.py` |
+| Database | AES-256-GCM, bound to the device id; damaged values give 409 (Task B) | `test_password_is_encrypted_at_rest`, `test_damaged_ciphertext…` |
+| Decryption | Only the connection test and Apply decrypt; neither logs or returns the value | Task B tests |
+| Generated config | Only `{FRIGATE_DEV_<id>_MAIN/SUB}` placeholders; cameras read the local restream | `test_frigate_config.py` invariant |
+| Secret files | Managed names only (`FRIGATE_DEV_<32 hex>_MAIN/SUB`); 0600 files, 0700 directory when created; temporary names Frigate ignores; symlinks at managed or temporary names replaced, never followed; other names untouched; errors carry names and OS reasons only | `test_frigate_secrets.py` (Linux-only checks run in WSL) |
+| Volumes | `frigate-secrets`: api read-write at `/frigate-secrets`, Frigate read-only at `/run/secrets`, `frigate-init` (root, no network) only `chown 10001`/`chmod 700`; no other service mounts it | `test_secrets_volume_is_shared_only_by_api_and_frigate`, `test_init_seeds…` |
+| Frigate / go2rtc start | Values read from `/run/secrets` at start; secret sets ordered so a start never meets a missing name | Task A, item 14 |
+| Messages, logs | `redact` on every Frigate message; device ids and reasons in logs | Task A, item 15 |
+| Kept copies | `frigate-config.previous.yml` (+ `.1`), 0600 in the api volume; Frigate's raw file, i.e. placeholders, unless someone typed a password into Frigate's config by hand | Task A lifecycle |
+| Committed files, CI | Only placeholders (`<user>:<password>`) and fake values (`fake-…`, `S3cret!pass@word`, TEST-NET addresses) in tests and docs; `.env` ignored, `.env.example` without values | `git grep` for `rtsp://user:pass@` patterns; `test_env_example_contains_no_real_credentials` |
+
+Gaps found and fixed:
+- **G1:** `redact` removed full URLs and the raw password, but Frigate messages are cut at 300 characters, so a URL cut in the middle kept its **URL-encoded** password (`%21` for `!`). The encoded form is now removed too. `test_password_in_a_cut_off_frigate_message_is_still_removed` failed before the fix.
+- **G2:** removing a device that is used in Frigate deletes its encrypted password, but Frigate keeps the camera and its secret file (with the password) until the next apply, because Frigate needs it to start. That cannot be removed earlier without breaking go2rtc, so the remove confirmation now says so (`setup-page.test.tsx`), and SETUP 4a documents it and the plain-text nature of the secrets volume.
+- Pinned (already safe): a symlink planted at a temporary name is not written through.
+
+Not changed, by design: the secrets volume holds plain-text URLs (Frigate must read them); Frigate's own `/api/config/raw_paths` on the internal port shows Frigate's view of its config (ADR-0003).
+
+Results: backend Windows **445 passed, 7 skipped** (the new symlink test is Linux-only); Linux (fresh clone of `2d98ff2` + this change) **451 passed, 1 skipped**, secret-file tests 3/3 repeats; `ruff` clean; frontend **47 passed**, build OK (Windows).
+
 ## To fill in on the Ubuntu host
 ```
 Date:

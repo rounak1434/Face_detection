@@ -287,6 +287,16 @@ def test_refused_config_keeps_frigate_and_restores_the_secrets(signed_in, settin
     assert secret_name(old["id"], "main") in before_secrets
 
 
+def test_password_in_a_cut_off_frigate_message_is_still_removed(signed_in, settings, fake):
+    """Frigate messages are cut at 300 characters, so a URL can arrive incomplete; its encoded password must still go."""
+    _approved(signed_in, settings)
+    fake.reject_next_save = "x" * 230 + "rtsp://viewer:fake-Pa55%21word@192.168.1"  # cut inside the URL
+    resp = _apply(signed_in)
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "fake-Pa55%21word" not in detail and PASSWORD not in detail and "***" in detail
+
+
 def test_lost_save_response_is_judged_by_what_frigate_runs(signed_in, settings, fake):
     _approved(signed_in, settings)
     fake.drop_save_response = True

@@ -206,6 +206,17 @@ def test_temporary_names_are_invisible_to_frigate(secrets):
 
 
 @pytest.mark.skipif(os.name != "posix", reason="symlinks need privileges on Windows")
+def test_a_symlink_planted_at_a_temporary_name_is_not_written_through(secrets, tmp_path):
+    target = tmp_path / "outside"
+    target.write_text("must stay")
+    (secrets.directory / f".tmp-{MAIN_A}").symlink_to(target)
+    secrets.replace_all({MAIN_A: URL_1})
+    assert target.read_text() == "must stay"
+    assert secrets.read() == {MAIN_A: URL_1}
+    assert not (secrets.directory / MAIN_A).is_symlink()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlinks need privileges on Windows")
 def test_a_symlink_with_a_managed_name_is_replaced_not_followed(secrets, tmp_path):
     target = tmp_path / "outside"
     target.write_text("must stay")

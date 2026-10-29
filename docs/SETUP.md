@@ -123,6 +123,8 @@ Detection runs on the **CPU** by default. The GPU is optional (section 8).
 - The `entrance` camera stays. A device switched on but no longer **Connected** (for example after editing it) is skipped and listed.
 - If Frigate refuses the configuration, or does not come back with the expected cameras, the previous configuration and secret files are restored automatically. The configuration from before the last apply is also kept in the api volume as `frigate-config.previous.yml` (and the one before that as `…previous.yml.1`; never more than these two). If Frigate cannot be reached even for the restore, the page says the outcome is unknown instead of reporting success.
 - Only one api process may run (Compose starts one); two at once could apply at the same time.
+- The secrets volume holds the stream addresses **with passwords in plain text** (owner-only files, readable by root and the api user); in the database they are encrypted. Treat any copy of that volume like the credentials key.
+- Removing a device, or switching it off, removes it from Frigate (and its file from the secrets volume) only at the next **Apply to Frigate**: until then Frigate still needs that file to start the camera.
 - Each apply builds the whole configuration from the template, so it also brings template changes to Frigate. Changes made in Frigate's own UI are replaced by the next apply; make lasting changes in the template.
 
 **To start Frigate's live config over from the template:** `docker compose stop frigate`, then `sudo mv storage/frigate-config/config.yml storage/frigate-config/config.yml.old`, then `docker compose up -d`. Saved devices return at the next apply.

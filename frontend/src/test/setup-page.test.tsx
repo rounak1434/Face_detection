@@ -210,6 +210,16 @@ describe("SetupPage", () => {
     expect(screen.getByRole("button", { name: "Apply to Frigate" })).toBeEnabled();
   });
 
+  it("warns that a removed device stays in Frigate until the next apply", async () => {
+    mockFetch((method) => (method === "DELETE" ? { status: 204 } : { status: 200, body: [{ ...nvr, use_in_frigate: true }] }));
+    const confirm = vi.fn((_message: string) => false);
+    vi.stubGlobal("confirm", confirm);
+    render(<SetupPage />);
+    const card = await screen.findByRole("article", { name: "Gate NVR" });
+    fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+    expect(confirm.mock.calls[0][0]).toMatch(/stays in Frigate.*until you press "Apply to Frigate" again/);
+  });
+
   it("starts the webcam only on request, through the browser API", async () => {
     mockFetch(() => ({ status: 200, body: [] }));
     const stop = vi.fn();

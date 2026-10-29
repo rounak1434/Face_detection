@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import yaml
 from sqlalchemy import select
@@ -108,7 +109,8 @@ def build_plan(db: Session, cipher: CredentialCipher, template_text: str) -> App
         secrets.update(urls)
         sensitive.extend(urls.values())
         if password:
-            sensitive.append(password)
+            # Also the URL-encoded form: a message cut off inside a URL holds it without the full URL.
+            sensitive.extend([password, quote(password, safe="")])
 
     devices = [FrigateDevice(d.id, d.name, bool(d.sub_path), *_detect_size(d)) for d in ready]
     try:

@@ -83,7 +83,11 @@ export function SetupPage() {
   };
 
   const remove = async (d: Device) => {
-    if (!window.confirm(`Remove "${d.name}"? Its stored credentials are deleted.`)) return;
+    const inFrigate = d.use_in_frigate
+      ? " It stays in Frigate, together with the stream address and password Frigate was given, until you " +
+        "press \"Apply to Frigate\" again."
+      : "";
+    if (!window.confirm(`Remove "${d.name}"? Its stored credentials are deleted.${inFrigate}`)) return;
     try {
       await api.deleteDevice(d.id);
       setDevices((list) => list.filter((x) => x.id !== d.id));
