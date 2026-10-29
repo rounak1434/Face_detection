@@ -11,6 +11,8 @@ export function SetupPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +59,29 @@ export function SetupPage() {
     }
   };
 
+  const applyToFrigate = async () => {
+    const ok = window.confirm(
+      "Apply to Frigate restarts Frigate once or twice. Live view and recording stop for about one to two " +
+        "minutes. Devices switched to \"Use in Frigate\" with a passed connection test are applied. Continue?",
+    );
+    if (!ok) return;
+    setApplying(true);
+    setError(null);
+    setApplied(null);
+    try {
+      const result = await api.applyToFrigate();
+      const cameras = result.cameras.map((c) => `${c.name} as "${c.camera}"`).join(", ") || "no saved devices";
+      const skipped = result.skipped.length
+        ? ` Skipped (connection test not passed): ${result.skipped.map((s) => s.name).join(", ")}.`
+        : "";
+      setApplied(`Frigate now runs ${cameras}.${skipped}`);
+    } catch (err) {
+      setError(`Apply to Frigate: ${(err as Error).message}`);
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const remove = async (d: Device) => {
     if (!window.confirm(`Remove "${d.name}"? Its stored credentials are deleted.`)) return;
     try {
@@ -89,14 +114,19 @@ export function SetupPage() {
     <div className="setup">
       <h1 className="page-title">Camera &amp; NVR Setup</h1>
       <p className="notice">
-        Saving a device here stores and tests its connection. The engine does not yet stream saved devices
-        automatically: the live view still uses the streams configured in <code>deploy/.env</code> (see SETUP.md).
-        &quot;Use in Frigate&quot; only marks a tested device for the coming &quot;Apply to Frigate&quot; step; it changes
-        nothing in Frigate yet.
+        Saving a device here stores and tests its connection. Saved devices reach Frigate only through
+        &quot;Apply to Frigate&quot;, for the devices switched to &quot;Use in Frigate&quot;; the{" "}
+        <code>entrance</code> camera from <code>deploy/.env</code> stays as it is (see SETUP.md).
         A device shows <strong>Connected</strong> only after a test in which the server actually decoded video
         from it.
       </p>
       {error && <p className="error" role="alert">{error}</p>}
+      {applied && <p className="notice" role="status">{applied}</p>}
+      <div className="actions">
+        <button onClick={applyToFrigate} disabled={applying}>
+          {applying ? "Applying to Frigate… (Frigate is restarting)" : "Apply to Frigate"}
+        </button>
+      </div>
 
       <WebcamPreview />
 

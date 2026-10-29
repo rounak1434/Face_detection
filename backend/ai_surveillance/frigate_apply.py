@@ -1,0 +1,224 @@
+"""Apply approved saved devices to Frigate (ADR-0003, step 4).
+
+Frigate 0.18.2 facts this relies on (checked in its source):
+- `{FRIGATE_*}` values, including files in /run/secrets, are read once when
+  Frigate starts (`frigate/config/env.py`).
+- `/api/config/save` refuses a go2rtc stream source that is new compared with
+  the saved file unless its placeholders resolve in the running process
+  (`find_restricted_go2rtc_stream_changes`, `frigate/util/services.py`). So a
+  newly added device needs a restart *before* the save, to load its secret.
+- `/api/config/save` validates before writing (400 keeps the old file) and,
+  with `save_option=restart`, restarts Frigate after writing.
+
+Sequence: build everything first (nothing changes on failure), keep Frigate's
+current config and the current secret files, write the new secret files,
+restart Frigate only when a device's secret is new, save the config with a
+restart, then check that Frigate runs exactly the saved file with the expected
+cameras. On any failure after the first change the previous secret files and
+config are put back. URLs and passwords never appear in messages or logs.
+"""
+
+import asyncio
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+
+import yaml
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from . import devices as dev
+from .config import Settings
+from .credentials import CredentialCipher, CredentialError
+from .db import Device
+from .frigate_client import FrigateClient, FrigateConfigRejected, FrigateError
+from .frigate_config import FrigateDevice, render_config, secret_name
+from .frigate_secrets import FrigateSecrets, SecretWriteError
+
+log = logging.getLogger(__name__)
+
+
+class ApplyError(Exception):
+    """The apply failed; `status` is the HTTP status for the route, the message is safe to show."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+@dataclass
+class ApplyPlan:
+    config_text: str
+    secrets: dict[str, str]  # secret name -> URL (credential-bearing)
+    cameras: list[dict]  # [{"device_id", "name", "camera"}]
+    skipped: list[dict]  # approved but not connected: [{"device_id", "name", "reason"}]
+    expected_cameras: set[str] = field(default_factory=set)
+    _sensitive: list[str] = field(default_factory=list)
+
+    def redact(self, text: str) -> str:
+        for value in self._sensitive:
+            if value:
+                text = text.replace(value, "***")
+        return text
+
+
+def _detect_size(device: Device) -> tuple[int | None, int | None]:
+    try:
+        streams = json.loads(device.test_result) if device.test_result else {}
+    except ValueError:
+        return None, None
+    stream = streams.get("sub" if device.sub_path else "main") or {}
+    w, h = stream.get("width"), stream.get("height")
+    return (w, h) if isinstance(w, int) and isinstance(h, int) else (None, None)
+
+
+def build_plan(db: Session, cipher: CredentialCipher, template_text: str) -> ApplyPlan:
+    """Everything the apply writes, computed without touching Frigate or the disk."""
+    approved = list(db.scalars(select(Device).where(Device.use_in_frigate.is_(True)).order_by(Device.created_at)))
+    ready = [d for d in approved if d.status == dev.CONNECTED]
+    skipped = [{"device_id": d.id, "name": d.name, "reason": "connection test has not passed"}
+               for d in approved if d.status != dev.CONNECTED]
+
+    secrets: dict[str, str] = {}
+    sensitive: list[str] = []
+    for d in ready:
+        password = None
+        if d.password_enc:
+            try:
+                password = cipher.decrypt(d.password_enc, d.id)
+            except CredentialError as exc:
+                raise ApplyError(409, f"{d.name}: {exc}. Re-enter the password; nothing was changed.") from None
+        for stream, path in (("main", d.main_path), ("sub", d.sub_path)):
+            if path:
+                url = dev.build_url(d.host, d.rtsp_port, path, d.username, password)
+                secrets[secret_name(d.id, stream)] = url
+                sensitive.append(url)
+        if password:
+            sensitive.append(password)
+
+    devices = [FrigateDevice(d.id, d.name, bool(d.sub_path), *_detect_size(d)) for d in ready]
+    try:
+        config_text, names = render_config(template_text, devices)
+    except ValueError as exc:
+        raise ApplyError(422, f"Frigate configuration could not be built: {exc}. Nothing was changed.") from None
+    expected = set(yaml.safe_load(config_text)["cameras"])
+    cameras = [{"device_id": d.id, "name": d.name, "camera": names[d.id]} for d in ready]
+    return ApplyPlan(config_text, secrets, cameras, skipped, expected,
+                     sorted(sensitive, key=len, reverse=True))
+
+
+def _keep_previous(path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(temp, path)
+
+
+async def wait_for_restart(frigate: FrigateClient, settings: Settings) -> None:
+    """Wait until Frigate has stopped and then answers again."""
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    seen_down = False
+    while True:
+        up = await frigate.is_up()
+        if not up:
+            seen_down = True
+        elif seen_down:
+            return
+        elapsed = loop.time() - start
+        if not seen_down and elapsed >= settings.frigate_restart_down_seconds:
+            raise FrigateError(f"Frigate did not restart within {settings.frigate_restart_down_seconds:g} s")
+        if elapsed >= settings.frigate_restart_timeout_seconds:
+            raise FrigateError(f"Frigate did not come back within {settings.frigate_restart_timeout_seconds:g} s")
+        await asyncio.sleep(settings.frigate_restart_poll_seconds)
+
+
+async def _verify(frigate: FrigateClient, config_text: str, expected: set[str]) -> None:
+    if await frigate.config_raw() != config_text:
+        raise FrigateError("Frigate is not running the saved configuration")
+    missing = expected - set(await frigate.cameras())
+    if missing:
+        raise FrigateError(f"Frigate did not load the cameras {sorted(missing)}")
+
+
+async def _save_and_restart(frigate: FrigateClient, settings: Settings, text: str) -> None:
+    try:
+        await frigate.save_config(text, restart=True)
+    except FrigateConfigRejected:
+        raise
+    except FrigateError:
+        pass  # the response is often lost while Frigate restarts; the check afterwards decides
+    await wait_for_restart(frigate, settings)
+
+
+async def _restore(frigate: FrigateClient, settings: Settings, secrets: FrigateSecrets,
+                   previous_secrets: dict[str, str], previous_config: str) -> int:
+    """Put the previous secret files and config back; returns the number of restarts."""
+    secrets.replace_all(previous_secrets)
+    if await frigate.config_raw() == previous_config:
+        return 0  # the config was never replaced; the extra secrets loaded in Frigate are unused
+    # Load the previous secrets first: config/save refuses placeholders Frigate cannot resolve.
+    await frigate.restart()
+    await wait_for_restart(frigate, settings)
+    await _save_and_restart(frigate, settings, previous_config)
+    await _verify(frigate, previous_config, set())
+    return 2
+
+
+async def apply(plan: ApplyPlan, frigate: FrigateClient, settings: Settings, secrets: FrigateSecrets) -> dict:
+    try:
+        previous_config = await frigate.config_raw()
+    except FrigateError as exc:
+        raise ApplyError(502, f"{exc}. Nothing was changed.") from None
+    try:
+        _keep_previous(settings.frigate_previous_config_file, previous_config)
+        previous_secrets = secrets.read()
+    except OSError as exc:
+        raise ApplyError(500, f"Could not keep the previous configuration ({exc.strerror}). Nothing was changed.") from None
+
+    new_names = set(plan.secrets) - set(previous_secrets)
+    try:
+        secrets.replace_all(plan.secrets)
+    except SecretWriteError as exc:
+        try:
+            secrets.replace_all(previous_secrets)
+        except SecretWriteError:
+            raise ApplyError(500, f"{exc}; the previous secret files could not be put back either") from None
+        raise ApplyError(500, f"{exc}. Nothing was changed.") from None
+
+    restarts = 0
+    try:
+        if new_names:
+            await frigate.restart()
+            restarts += 1
+            await wait_for_restart(frigate, settings)
+        try:
+            await _save_and_restart(frigate, settings, plan.config_text)
+        except FrigateConfigRejected as exc:
+            secrets.replace_all(previous_secrets)  # Frigate kept its config file
+            raise ApplyError(422, "Frigate refused the configuration; its previous configuration is unchanged: "
+                             + plan.redact(str(exc))) from None
+        restarts += 1
+        await _verify(frigate, plan.config_text, plan.expected_cameras)
+    except ApplyError:
+        raise
+    except (FrigateError, SecretWriteError) as failure:
+        reason = plan.redact(str(failure))
+        log.warning("Apply to Frigate failed (%s); restoring the previous configuration", reason)
+        try:
+            restarts += await _restore(frigate, settings, secrets, previous_secrets, previous_config)
+        except (FrigateError, SecretWriteError) as exc:
+            log.error("Restoring Frigate's previous configuration failed: %s", plan.redact(str(exc)))
+            raise ApplyError(502, f"{reason}. Restoring the previous configuration also failed "
+                             f"({plan.redact(str(exc))}); it is kept in {settings.frigate_previous_config_file.name} "
+                             "in the api data directory.") from None
+        raise ApplyError(502, f"{reason}. The previous configuration was restored.") from None
+
+    log.info("Applied %d saved device(s) to Frigate with %d restart(s)", len(plan.cameras), restarts)
+    return {"cameras": plan.cameras, "skipped": plan.skipped, "restarts": restarts}

@@ -14,7 +14,7 @@ function frigateHint(device: Device) {
   const connected = device.status === "connected";
   if (device.use_in_frigate && !connected) return "Skipped when applying to Frigate until a connection test passes again.";
   if (!device.use_in_frigate && !connected) return "Available after a successful connection test.";
-  return "Takes effect only when the configuration is applied to Frigate.";
+  return "Takes effect at the next \"Apply to Frigate\".";
 }
 
 function streamLine(label: string, url: string, test?: StreamTest) {

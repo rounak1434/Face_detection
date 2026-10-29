@@ -147,7 +147,7 @@ describe("SetupPage", () => {
     const put = calls.find((c) => c.method === "PUT")!;
     expect(put.path).toBe("/api/devices/d1/frigate");
     expect(put.body).toEqual({ use_in_frigate: true });
-    expect(within(card).getByText(/Takes effect only when the configuration is applied/)).toBeInTheDocument();
+    expect(within(card).getByText(/Takes effect at the next "Apply to Frigate"/)).toBeInTheDocument();
   });
 
   it("lets an approved device that is no longer connected be switched off, and says it is skipped", async () => {
@@ -174,6 +174,40 @@ describe("SetupPage", () => {
     fireEvent.click(within(card).getByRole("checkbox", { name: "Use in Frigate" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Gate NVR: At most 32 devices can be used in Frigate");
     expect(within(card).getByRole("checkbox", { name: "Use in Frigate" })).not.toBeChecked();
+  });
+
+  it("applies to Frigate only after confirming the restart warning", async () => {
+    const calls = mockFetch((method) =>
+      method === "POST"
+        ? { status: 200, body: { cameras: [{ device_id: "d1", name: "Gate NVR", camera: "gate_nvr" }],
+            skipped: [{ device_id: "d2", name: "Back Door", reason: "connection test has not passed" }], restarts: 2 } }
+        : { status: 200, body: [nvr] });
+    const confirm = vi.fn((_message: string) => false);
+    vi.stubGlobal("confirm", confirm);
+    render(<SetupPage />);
+    const button = await screen.findByRole("button", { name: "Apply to Frigate" });
+    fireEvent.click(button);
+    expect(confirm.mock.calls[0][0]).toMatch(/restarts Frigate once or twice/);
+    expect(calls.some((c) => c.path === "/api/frigate/apply")).toBe(false);
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(button);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      'Frigate now runs Gate NVR as "gate_nvr". Skipped (connection test not passed): Back Door.');
+    expect(calls.filter((c) => c.method === "POST" && c.path === "/api/frigate/apply")).toHaveLength(1);
+  });
+
+  it("shows why an apply failed", async () => {
+    mockFetch((method) =>
+      method === "POST"
+        ? { status: 502, body: { detail: "Frigate did not come back within 180 s. The previous configuration was restored." } }
+        : { status: 200, body: [nvr] });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<SetupPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Apply to Frigate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Apply to Frigate: Frigate did not come back within 180 s. The previous configuration was restored.");
+    expect(screen.getByRole("button", { name: "Apply to Frigate" })).toBeEnabled();
   });
 
   it("starts the webcam only on request, through the browser API", async () => {

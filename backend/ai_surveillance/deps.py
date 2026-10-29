@@ -30,6 +30,7 @@ class AppState:
     analysis_slots: asyncio.Semaphore
     background: set[asyncio.Task] = field(default_factory=set)
     device_tests: dict[str, float] = field(default_factory=dict)  # device id -> last test time
+    frigate_apply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # one "Apply to Frigate" at a time
     _cameras: dict[str, dict] | None = None
     _cameras_at: float = 0.0
 

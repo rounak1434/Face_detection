@@ -84,6 +84,54 @@ def test_live_stream_choice(config, expected):
     assert live_stream_name("entrance", config) == expected
 
 
+def test_config_raw_decodes_frigates_json_string():
+    """Frigate 0.18.2 wraps the file in a JSONResponse with media type text/plain."""
+    client = _client()
+    with respx.mock(base_url=AUTH_URL) as mock:
+        mock.get("/api/config/raw").respond(200, text='"cameras:\\n  a: {}\\n"', headers={"content-type": "text/plain"})
+        assert run(client.config_raw()) == "cameras:\n  a: {}\n"
+
+
+def test_save_config_sends_text_and_the_save_option():
+    client = _client(frigate_username="viewer", frigate_password="pw-123456789012")
+    with respx.mock(base_url=AUTH_URL) as mock:
+        mock.post("/api/login").respond(200, headers={"set-cookie": "frigate_token=jwt-1"})
+        save = mock.post("/api/config/save").respond(200, json={"success": True, "message": "Config successfully saved."})
+        assert run(client.save_config("cameras: {}\n", restart=False)) == "Config successfully saved."
+        run(client.save_config("cameras: {}\n", restart=True))
+    first, second = (c.request for c in save.calls)
+    assert first.url.params["save_option"] == "saveonly" and second.url.params["save_option"] == "restart"
+    assert first.content == b"cameras: {}\n"
+    assert first.headers["content-type"] == "text/plain"
+    assert first.headers["authorization"] == "Bearer jwt-1"
+
+
+def test_save_config_refusal_is_its_own_error():
+    from ai_surveillance.frigate_client import FrigateConfigRejected
+
+    client = _client()
+    with respx.mock(base_url=AUTH_URL) as mock:
+        mock.post("/api/config/save").respond(400, json={"success": False, "message": "Your configuration is invalid."})
+        with pytest.raises(FrigateConfigRejected, match="Your configuration is invalid"):
+            run(client.save_config("x: 1\n", restart=True))
+        mock.post("/api/config/save").respond(500, json={"success": False, "message": "boom"})
+        with pytest.raises(FrigateError, match="HTTP 500") as caught:
+            run(client.save_config("x: 1\n", restart=True))
+        assert not isinstance(caught.value, FrigateConfigRejected)
+
+
+def test_restart_and_is_up():
+    client = _client()
+    with respx.mock(base_url=AUTH_URL) as mock:
+        mock.post("/api/restart").respond(500, json={"success": False, "message": "Unable to restart Frigate."})
+        with pytest.raises(FrigateError, match="Unable to restart Frigate"):
+            run(client.restart())
+        mock.get("/api/version").mock(side_effect=httpx.ConnectError("down"))
+        assert run(client.is_up()) is False
+        mock.get("/api/version").respond(200, text="0.18.2")
+        assert run(client.is_up()) is True
+
+
 def test_live_ws_url():
     http = FrigateClient(Settings(frigate_url="http://frigate:5000", _env_file=None))
     assert http.live_ws_url("entrance_sub") == "ws://frigate:5000/live/mse/api/ws?src=entrance_sub"

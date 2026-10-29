@@ -25,6 +25,10 @@ class FrigateNotFound(FrigateError):
     """Frigate answered 404 for the requested resource."""
 
 
+class FrigateConfigRejected(FrigateError):
+    """Frigate refused a config in /api/config/save (HTTP 400); its config file is unchanged."""
+
+
 def _message(resp: httpx.Response) -> str | None:
     """Frigate error bodies look like {"success": false, "message": "..."}."""
     try:
@@ -89,9 +93,10 @@ class FrigateClient:
                 await self._login()
         return {"Authorization": f"Bearer {self._token}"}
 
-    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _request(self, method: str, path: str, headers: dict[str, str] | None = None, **kwargs) -> httpx.Response:
+        extra = headers or {}
         for attempt in range(2):
-            headers = await self.auth_headers()
+            headers = {**extra, **await self.auth_headers()}
             try:
                 resp = await self._client.request(method, path, headers=headers, **kwargs)
             except httpx.HTTPError as exc:
@@ -128,6 +133,55 @@ class FrigateClient:
         if not isinstance(cameras, dict):
             raise FrigateError("Frigate config has no cameras section")
         return cameras
+
+    async def is_up(self) -> bool:
+        """True when Frigate answers /api/version (public); False while it is down or restarting."""
+        try:
+            await self.version()
+        except FrigateError:
+            return False
+        return True
+
+    async def config_raw(self) -> str:
+        """The saved config file, unredacted (admin role). Frigate 0.18.2 sends the text
+        through a JSONResponse with media type text/plain, so the body is a JSON string."""
+        resp = await self._request("GET", "/api/config/raw")
+        if resp.status_code != 200:
+            detail = _message(resp)
+            raise FrigateError(f"Frigate config/raw returned HTTP {resp.status_code}" + (f": {detail}" if detail else ""))
+        try:
+            text = resp.json()
+        except ValueError:
+            text = resp.text
+        if not isinstance(text, str):
+            raise FrigateError("Frigate config/raw did not return text")
+        return text
+
+    async def save_config(self, text: str, restart: bool) -> str:
+        """POST /api/config/save?save_option=restart|saveonly with the whole YAML (admin role).
+
+        Frigate validates first; 400 means it refused the config and kept its
+        file (FrigateConfigRejected). With restart, Frigate restarts itself
+        right after writing, so the response can be lost (FrigateError).
+        """
+        resp = await self._request(
+            "POST", "/api/config/save",
+            params={"save_option": "restart" if restart else "saveonly"},
+            content=text.encode("utf-8"), headers={"Content-Type": "text/plain"},
+        )
+        detail = _message(resp) or ""
+        if resp.status_code == 400:
+            raise FrigateConfigRejected(detail or "Frigate refused the configuration")
+        if resp.status_code != 200:
+            raise FrigateError(f"Frigate config/save returned HTTP {resp.status_code}" + (f": {detail}" if detail else ""))
+        return detail
+
+    async def restart(self) -> None:
+        """POST /api/restart (admin role). The response can be lost while Frigate stops."""
+        resp = await self._request("POST", "/api/restart")
+        if resp.status_code != 200:
+            detail = _message(resp)
+            raise FrigateError(f"Frigate restart returned HTTP {resp.status_code}" + (f": {detail}" if detail else ""))
 
     async def camera_fps(self, camera: str) -> float | None:
         """Frames per second Frigate is receiving, from /api/stats; None if not reported."""

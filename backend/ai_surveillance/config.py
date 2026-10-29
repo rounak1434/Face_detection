@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     frigate_verify_tls: bool = True
     frigate_timeout_seconds: float = 10.0
 
+    # "Apply to Frigate" (ADR-0003). Unset paths disable it (503). The template
+    # is deploy/frigate/config.yml; the secrets directory is the volume Frigate
+    # mounts read-only as /run/secrets.
+    frigate_config_template: Path | None = None
+    frigate_secrets_dir: Path | None = None
+    # Frigate's config before the last apply, kept for manual recovery.
+    frigate_previous_config_file: Path = Path("./data/frigate-config.previous.yml")
+    # Each restart: Frigate must stop within the first value and answer again within the second.
+    frigate_restart_down_seconds: float = Field(default=30.0, gt=0)
+    frigate_restart_timeout_seconds: float = Field(default=180.0, gt=0)
+    frigate_restart_poll_seconds: float = Field(default=1.0, ge=0)
+
     session_ttl_hours: int = 12
     # Set to false only for plain-HTTP local development.
     cookie_secure: bool = True

@@ -72,6 +72,12 @@ export type Device = {
   use_in_frigate: boolean;
 };
 
+export type FrigateApplyResult = {
+  cameras: { device_id: string; name: string; camera: string }[];
+  skipped: { device_id: string; name: string; reason: string }[];
+  restarts: number;
+};
+
 export type DeviceInput = {
   name: string;
   kind: "ip_camera" | "nvr";
@@ -214,6 +220,7 @@ export const api = {
       body: JSON.stringify({ use_in_frigate: useInFrigate }),
     }),
   addSynthetic: () => request<Device>("/api/devices/synthetic", { method: "POST" }),
+  applyToFrigate: () => request<FrigateApplyResult>("/api/frigate/apply", { method: "POST" }),
   models: () => request<ModelsResponse>("/api/models"),
   // Multipart upload, field "file". The server ignores the file name and checks the bytes.
   analyseFaces: (file: File, minScore?: number) => {

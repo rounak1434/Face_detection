@@ -47,3 +47,19 @@
 3. Migration and API: the "Use in Frigate" flag, validation, UI switch; tests.
 4. `POST /api/frigate/apply` (sign-in required): render, stage, `config/save?save_option=restart`, verify cameras through `/api/config`, restore the previous config and secrets on any failure; error mapping; tests with a mocked Frigate.
 5. Compose and setup documentation; real-stack verification stays pending until the Ubuntu host is available.
+
+Steps 1–4 are done. Step 4 changed after a second source check:
+
+## Amendment (2026-10-29): two restarts for new devices
+A second check of the v0.18.2 source found that `config/save` refuses any go2rtc stream source that is new compared with the saved file unless its `{FRIGATE_*}` placeholders resolve **in the running Frigate process** (`find_restricted_go2rtc_stream_changes` in `frigate/util/services.py`). Secret files are read only at startup, so the planned single "save with restart" would always be refused for a newly added device. **Owner's decision: two restarts** (alternatives were the api writing Frigate's file directly with one restart and no prior validation, or stopping after step 3).
+
+The apply (`frigate_apply.py`) now:
+1. Builds the config and the secret values first; a password that cannot be decrypted or an invalid template stops here with nothing changed.
+2. Keeps Frigate's current file (`/api/config/raw`, also written owner-only to `FRIGATE_PREVIOUS_CONFIG_FILE`) and the current secret files.
+3. Writes the new secret files.
+4. Only when a secret name is new: `POST /api/restart` and waits until Frigate has stopped and answers again, so it loads the new secrets.
+5. `config/save?save_option=restart` and waits for the restart. A 400 means Frigate kept its file: the previous secret files are put back and the error is shown (passwords and URLs removed from Frigate's message).
+6. Checks that `/api/config/raw` is exactly the saved text and that `/api/config` lists every expected camera.
+7. On any failure after step 3: previous secret files back; if Frigate's file had changed, restart (to load the previous secrets, which `config/save` needs), save the previous config with a restart, and check it. If that also fails, the message names the kept file.
+
+Only one apply runs at a time. Live view and recording pause for about one minute per restart.
