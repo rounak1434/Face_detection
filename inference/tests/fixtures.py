@@ -1,5 +1,5 @@
-"""Synthetic test images, generated in code. The only photograph in the
-repository is the public-domain portrait documented in
+"""Synthetic test images, generated in code. The only photographs in the
+repository are the public-domain NASA portraits documented in
 tests/data/public_domain/README.md."""
 
 import io

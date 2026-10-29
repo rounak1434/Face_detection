@@ -16,7 +16,8 @@ from .face_events import Ingestor, face_ingest_loop, face_retention_loop
 from .frigate_client import FrigateClient
 from .media import MediaStore
 from .inference_client import InferenceClient
-from .routes import analysis, audit, auth, cameras, captures, devices, face_events, frigate, health, live, people
+from .routes import (analysis, audit, auth, cameras, captures, devices, face_events, frigate, health, live, people,
+                     recognition)
 from .security import LoginThrottle, purge_expired_sessions
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         if settings.capture_retention_days > 0:
             state.spawn(retention_loop(db.sessionmaker, store, settings.capture_retention_days))
         if settings.face_events_enabled:
-            state.spawn(face_ingest_loop(Ingestor(settings, state.frigate, state.inference, db.sessionmaker, face_store)))
+            state.spawn(face_ingest_loop(Ingestor(settings, state.frigate, state.inference, db.sessionmaker, face_store,
+                                                  cipher=state.cipher, gallery_store=gallery_store)))
         if settings.face_event_retention_days > 0:
             state.spawn(face_retention_loop(db.sessionmaker, face_store, settings.face_event_retention_days))
         yield
@@ -69,7 +71,8 @@ def create_app(settings: Settings | None = None, frigate_transport: httpx.AsyncB
         db.engine.dispose()
 
     app = FastAPI(title=f"{settings.app_display_name} API", lifespan=lifespan, docs_url=None, redoc_url=None)
-    for module in (health, auth, cameras, captures, devices, frigate, face_events, people, audit, analysis, live):
+    for module in (health, auth, cameras, captures, devices, frigate, face_events, people, recognition, audit, analysis,
+                   live):
         app.include_router(module.router)
     return app
 

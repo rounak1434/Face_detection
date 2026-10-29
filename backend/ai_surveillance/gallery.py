@@ -2,18 +2,18 @@
 
 Enrollment accepts only an image that a signed-in administrator uploads. Nothing here reads face
 events, Frigate snapshots or camera frames: there is deliberately no path from footage into the
-gallery. Phase 5 stores reference images and their face geometry only; embeddings and matching
-come in Phase 6, so nothing here identifies anyone yet.
+gallery. Matching against the gallery (Phase 6) is in recognition.py and runs only while the
+recognition switch is on.
 """
 
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from .config import Settings
-from .db import AuditEntry, Person, ReferenceFace
+from .db import AuditEntry, FaceDetection, Person, ReferenceFace
 from .face_detection import _valid_face
 from .media import MediaStore
 
@@ -26,6 +26,8 @@ PERSON_DELETED = "person_deleted"
 FACE_ENROLLED = "reference_face_enrolled"
 FACE_DELETED = "reference_face_deleted"
 PASSWORD_CONFIRMATION_FAILED = "password_confirmation_failed"
+RECOGNITION_ENABLED = "recognition_enabled"
+RECOGNITION_DISABLED = "recognition_disabled"
 
 
 def audit(db: Session, username: str, action: str, target_type: str | None = None, target_id: str | None = None,
@@ -54,6 +56,7 @@ class ReferenceCandidate:
     quality: dict
     width: int
     height: int
+    embedding: tuple[float, ...] | None = None  # when the upload went through /v1/embed
 
 
 def single_face(result: dict, settings: Settings) -> ReferenceCandidate:
@@ -87,7 +90,10 @@ def single_face(result: dict, settings: Settings) -> ReferenceCandidate:
         raise EnrollmentRejected("low_quality", "The face is not usable as a reference: " + "; ".join(reasons),
                                  reasons)
     quality = face.get("quality") if isinstance(face.get("quality"), dict) else {}
-    return ReferenceCandidate(box, float(face["score"]), face["keypoints5"], quality, width, height)
+    from .recognition import decode_embedding  # recognition imports this module
+
+    return ReferenceCandidate(box, float(face["score"]), face["keypoints5"], quality, width, height,
+                              decode_embedding(face.get("embedding")))
 
 
 def _remove_files(store: MediaStore, names: list[str]) -> None:
@@ -106,9 +112,13 @@ def delete_person(sessions: sessionmaker, store: MediaStore, person_id: str, use
             return False
         files = list(db.scalars(select(ReferenceFace.image_file).where(ReferenceFace.person_id == person_id)))
         _remove_files(store, files)
+        # Past matches keep their outcome and similarity but no longer name the person.
+        unlinked = db.execute(update(FaceDetection).where(FaceDetection.person_id == person_id)
+                              .values(person_id=None)).rowcount or 0
         db.execute(delete(ReferenceFace).where(ReferenceFace.person_id == person_id))
         db.execute(delete(Person).where(Person.id == person_id))
-        audit(db, username, PERSON_DELETED, "person", person_id, f"{len(files)} reference image(s) removed")
+        audit(db, username, PERSON_DELETED, "person", person_id,
+              f"{len(files)} reference image(s) and their embeddings removed; {unlinked} past match(es) unlinked")
         db.commit()
     return True
 

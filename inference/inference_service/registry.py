@@ -39,7 +39,23 @@ YUNET = ModelSpec(
     notes="Face boxes, a confidence score and 5 keypoints (eyes, nose tip, mouth corners). Not liveness detection.",
 )
 
-MODELS: dict[str, ModelSpec] = {YUNET.name: YUNET}
+SFACE = ModelSpec(
+    name="sface",
+    task="face_embedding",
+    version="2021dec",
+    file_name="face_recognition_sface_2021dec.onnx",
+    # From the Git LFS pointer in opencv/opencv_zoo (checked in ADR-0004, Phase 1).
+    sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    size_bytes=38696353,
+    url="https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+    source="https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface",
+    license="Apache-2.0",
+    license_url="https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface",
+    notes="128-value face embedding of a face aligned on YuNet's 5 keypoints; compared by cosine similarity. "
+          "Says how alike two faces look, not who anyone is; thresholds must be checked on site. Not liveness detection.",
+)
+
+MODELS: dict[str, ModelSpec] = {YUNET.name: YUNET, SFACE.name: SFACE}
 
 # Status values reported by /v1/models.
 READY = "ready"

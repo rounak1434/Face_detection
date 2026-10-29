@@ -2,6 +2,7 @@
 
 import base64
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -144,7 +145,9 @@ def test_model_missing_reports_unavailable(settings):
     assert resp.json()["model_status"] == "missing"
     assert models[0]["name"] == "yunet" and models[0]["status"] == "missing"
     assert models[0]["license"] == "MIT"
-    assert health["models"] == {"yunet": "missing"} and health["ready"] is False
+    assert models[1]["name"] == "sface" and models[1]["status"] == "missing" and models[1]["license"] == "Apache-2.0"
+    assert health["models"] == {"yunet": "missing", "sface": "missing"} and health["ready"] is False
+    assert health["embed_ready"] is False
     assert_no_path(settings.models_dir, resp, models)
 
 
@@ -208,6 +211,85 @@ def test_health_ready_with_loaded_detector(settings):
     with client_with(settings, FakeDetector()) as c:
         assert c.get("/health").json()["ready"] is True
         assert c.get("/v1/health").json()["ready"] is True
+
+
+# --- /v1/embed ------------------------------------------------------------------
+
+class FakeEmbedder:
+    name = "fake-embedder"
+    version = "test"
+    dimensions = 128
+
+    def __init__(self, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    def embed(self, image, face):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("embedder exploded at /secret/path")
+        vector = np.zeros(128, dtype=np.float32)
+        vector[face.box.x % 128] = 1.0  # depends on the face, so faces are told apart
+        return vector
+
+
+def _vector(b64: str) -> np.ndarray:
+    return np.frombuffer(base64.b64decode(b64), dtype="<f4")
+
+
+def test_embed_adds_one_embedding_per_face(settings):
+    det, emb = FakeDetector([_face(100, 50, 80, 100, 0.95), _face(10, 10, 40, 40, 0.8)]), FakeEmbedder()
+    with TestClient(create_app(settings, detector=det, embedder=emb)) as c:
+        body = c.post("/v1/embed", content=fx.encode(fx.solid(320, 240), "JPEG")).json()
+        health = c.get("/health").json()
+    assert body["embedder"] == {"name": "fake-embedder", "version": "test", "dimensions": 128}
+    assert body["face_count"] == 2 and emb.calls == 2
+    first, second = (_vector(f["embedding"]) for f in body["faces"])
+    assert first.shape == (128,) and first[100] == 1.0 and second[10] == 1.0
+    assert body["faces"][0]["crop"] is None  # crops are off by default for /v1/embed
+    assert health["embed_ready"] is True and health["models"]["sface"] == "ready"
+
+
+def test_detect_never_runs_the_embedder(settings):
+    emb = FakeEmbedder()
+    with TestClient(create_app(settings, detector=FakeDetector([_face(100, 50, 80, 100)]), embedder=emb)) as c:
+        body = c.post("/v1/detect", content=fx.encode(fx.solid(320, 240), "JPEG")).json()
+    assert emb.calls == 0 and "embedding" not in body["faces"][0] and "embedder" not in body
+
+
+def test_embed_without_embedder_is_503_and_detect_still_works(settings):
+    with client_with(settings, FakeDetector([_face(100, 50, 80, 100)])) as c:
+        resp = c.post("/v1/embed", content=fx.encode(fx.solid(320, 240), "JPEG"))
+        detect = c.post("/v1/detect", content=fx.encode(fx.solid(320, 240), "JPEG"))
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "model_unavailable" and resp.json()["model"] == "sface"
+    assert resp.json()["model_status"] == "missing"
+    assert detect.status_code == 200
+    assert_no_path(settings.models_dir, resp)
+
+
+def test_embedder_crash_is_contained(settings):
+    det = FakeDetector([_face(100, 50, 80, 100)])
+    with TestClient(create_app(settings, detector=det, embedder=FakeEmbedder(fail=True))) as c:
+        resp = c.post("/v1/embed", content=fx.encode(fx.solid(320, 240), "JPEG"))
+    assert resp.status_code == 500 and resp.json()["error"] == "inference_failed"
+    assert "/secret/path" not in resp.text
+
+
+def test_embed_needs_the_token(settings):
+    settings.api_token = SecretStr(TOKEN)
+    emb = FakeEmbedder()
+    with TestClient(create_app(settings, detector=FakeDetector([_face(100, 50, 80, 100)]), embedder=emb)) as c:
+        assert c.post("/v1/embed", content=fx.encode(fx.solid(), "JPEG")).status_code == 401
+        ok = c.post("/v1/embed", content=fx.encode(fx.solid(), "JPEG"), headers={"Authorization": f"Bearer {TOKEN}"})
+    assert ok.status_code == 200 and emb.calls == 1
+
+
+def test_embed_with_no_face_is_a_normal_result(settings):
+    emb = FakeEmbedder()
+    with TestClient(create_app(settings, detector=FakeDetector([]), embedder=emb)) as c:
+        body = c.post("/v1/embed", content=fx.encode(fx.solid(), "JPEG")).json()
+    assert body["faces"] == [] and body["status"] == "no_faces_detected" and emb.calls == 0
 
 
 def test_detector_crash_is_contained(settings):

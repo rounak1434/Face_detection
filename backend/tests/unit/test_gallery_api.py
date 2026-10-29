@@ -5,7 +5,9 @@ API's rules (exactly one face, quality gate, consent, encryption, deletion, audi
 itself; real YuNet detection is covered in inference/tests and test_face_detection.py.
 """
 
+import base64
 import json
+import struct
 from pathlib import Path
 
 import httpx
@@ -40,7 +42,8 @@ def _detect(*faces):
 
 @pytest.fixture
 def detect(frigate):
-    return frigate.post(f"{INFERENCE}/v1/detect")
+    """Enrollment's analysis call: /v1/embed (detection, plus an embedding when SFace is loaded)."""
+    return frigate.post(f"{INFERENCE}/v1/embed")
 
 
 @pytest.fixture
@@ -188,6 +191,7 @@ def test_enroll_one_face_stores_an_encrypted_image(signed_in, db, settings, dete
     assert ".enc" not in resp.text and "image_file" not in resp.text
     sent = detect.calls.last.request
     assert sent.content == JPEG and sent.url.params["min_score"] == "0.5" and sent.url.params["max_faces"] == "10"
+    assert face["embedded"] is False and face["embedder"] is None  # this mock answer carries no embedding
 
     [name] = _files(settings)
     stored = (_gallery(settings).captures_dir / name).read_bytes()
@@ -200,6 +204,43 @@ def test_enroll_one_face_stores_an_encrypted_image(signed_in, db, settings, dete
     assert detail["face_count"] == 1 and [f["id"] for f in detail["faces"]] == [face["id"]]
     assert _audit(db)[-1] == (ADMIN_USER, "reference_face_enrolled", "reference_face", face["id"],
                               f"person {person['id']}")
+
+
+def test_enrollment_stores_the_embedding_encrypted(signed_in, db, settings, detect):
+    vector = [0.0] * 128
+    vector[3] = 2.0  # not normalised on purpose: stored normalised
+    face = {**_face(), "embedding": base64.b64encode(struct.pack("<128f", *vector)).decode()}
+    detect.respond(200, json={**_detect(face), "embedder": {"name": "sface", "version": "2021dec", "dimensions": 128}})
+    person = _create(signed_in)
+    resp = _enroll(signed_in, person["id"])
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["embedded"] is True and body["embedder"] == "sface 2021dec" and "embedding" not in body
+    with db.sessionmaker() as s:
+        row = s.get(ReferenceFace, body["id"])
+        blob = row.embedding_enc
+    assert struct.pack("<128f", *vector) not in blob  # encrypted at rest
+    cipher = CredentialCipher(load_key(settings))
+    stored = struct.unpack("<128f", cipher.decrypt_bytes(blob, f"reference_embedding:{body['id']}"))
+    assert stored[3] == pytest.approx(1.0)
+    assert '"embedding' not in signed_in.get(f"/api/people/{person['id']}").text  # never returned
+
+
+def test_enrollment_falls_back_to_detection_without_sface(signed_in, frigate, detect):
+    detect.respond(503, json={"error": "model_unavailable", "detail": "missing", "model": "sface",
+                              "model_status": "missing"})
+    fallback = frigate.post(f"{INFERENCE}/v1/detect").respond(200, json=_detect(_face()))
+    person = _create(signed_in)
+    resp = _enroll(signed_in, person["id"])
+    assert resp.status_code == 201 and resp.json()["embedded"] is False and fallback.call_count == 1
+
+
+def test_detector_unavailable_on_embed_is_not_a_fallback(signed_in, frigate, detect):
+    detect.respond(503, json={"error": "model_unavailable", "detail": "missing", "model": "yunet"})
+    fallback = frigate.post(f"{INFERENCE}/v1/detect").respond(200, json=_detect(_face()))
+    person = _create(signed_in)
+    resp = _enroll(signed_in, person["id"])
+    assert resp.status_code == 503 and resp.json()["error"] == "model_unavailable" and not fallback.called
 
 
 def test_png_keeps_its_media_type(signed_in, detect):
@@ -360,7 +401,8 @@ def test_delete_person_removes_files_rows_and_is_audited(signed_in, db, settings
     assert len(_files(settings)) == 1 and signed_in.get(kept_face["image_url"]).content == JPEG
     with db.sessionmaker() as s:
         assert s.scalar(select(func.count()).select_from(ReferenceFace)) == 1
-    assert _audit(db)[-1] == (ADMIN_USER, "person_deleted", "person", person["id"], "2 reference image(s) removed")
+    assert _audit(db)[-1] == (ADMIN_USER, "person_deleted", "person", person["id"],
+                              "2 reference image(s) and their embeddings removed; 0 past match(es) unlinked")
     assert _delete(signed_in, person["id"]).status_code == 404
 
 
@@ -425,7 +467,9 @@ def real_detector(signed_in):
         pytest.skip("verified YuNet model not present (python -m inference_service.download)")
     app = create_app(InferenceSettings(models_dir=MODELS, _env_file=None))
     app.state.detector = YuNetDetector(MODELS / YUNET.file_name)  # what the lifespan does for an injected detector
-    app.state.status = {YUNET.name: (READY, None)}
+    # No embedder: enrollment gets 503 from /v1/embed and falls back to /v1/detect (the Phase 5 path).
+    app.state.embedder = None
+    app.state.status = {YUNET.name: (READY, None), "sface": ("missing", None)}
     state = signed_in.app.state.app
     original = state.inference
     state.inference = InferenceClient(state.settings, transport=httpx.ASGITransport(app=app))

@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from inference_service.config import Settings
 from inference_service.imaging import decode
 from inference_service.main import create_app
-from inference_service.registry import READY, YUNET, verify_file
+from inference_service.registry import READY, SFACE, YUNET, verify_file
 
 from . import fixtures as fx
 
@@ -128,7 +128,8 @@ def test_small_face_is_detected_and_flagged(service, portrait):
 
 def test_service_reports_ready(service):
     health = service.get("/health").json()
-    assert health["ready"] is True and health["models"] == {"yunet": "ready"}
+    # SFace is reported independently; this file needs only YuNet (test_model_sface.py covers SFace).
+    assert health["ready"] is True and health["models"] == {"yunet": "ready", "sface": verify_file(SFACE, MODELS_DIR)[0]}
     model = service.get("/v1/models").json()[0]
     assert model["status"] == "ready" and model["sha256"] == YUNET.sha256 and model["license"] == "MIT"
 

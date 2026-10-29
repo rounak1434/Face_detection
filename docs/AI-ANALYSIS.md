@@ -124,7 +124,7 @@ Order of work in `POST /api/analysis/faces`:
 - `GET /api/models` returns `{"inference": {"reachable", "ready"}, "models": [{name, task, version, status, detail, license, license_url, source, sha256, notes, runtime}]}`.
 - `GET /api/health` includes `inference.reachable` and `inference.models_ready`.
 
-Internal inference endpoints (Docker network only): `GET /health`, `GET /v1/health`, `GET /v1/models`, `POST /v1/detect` (raw image bytes).
+Internal inference endpoints (Docker network only): `GET /health`, `GET /v1/health`, `GET /v1/models`, `POST /v1/detect` (raw image bytes), and `POST /v1/embed` (the same plus SFace embeddings, used only by the gallery and by face events while recognition is on; see [RECOGNITION.md](RECOGNITION.md)). The Analysis page itself uses detection only.
 
 ## Upload and crop storage
 - **Nothing is stored.** The uploaded image and crops exist only in memory during the request. They are not written to disk, the database or logs (`"stored": false`).

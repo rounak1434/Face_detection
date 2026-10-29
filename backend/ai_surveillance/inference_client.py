@@ -53,3 +53,11 @@ class InferenceClient:
         params = {k: v for k, v in {"min_score": min_score, "max_faces": max_faces}.items() if v is not None}
         return await self._send("POST", "/v1/detect", content=image, params=params,
                                 headers={"Content-Type": "application/octet-stream"})
+
+    async def embed(self, image: bytes, min_score: float | None, max_faces: int | None,
+                    crops: bool = False) -> httpx.Response:
+        """Like detect, plus an SFace embedding per face. Raw response, as for detect."""
+        params = {k: v for k, v in {"min_score": min_score, "max_faces": max_faces}.items() if v is not None}
+        params["crops"] = "true" if crops else "false"
+        return await self._send("POST", "/v1/embed", content=image, params=params,
+                                headers={"Content-Type": "application/octet-stream"})

@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,6 +69,22 @@ class Settings(BaseSettings):
     gallery_other_face_score: float = Field(default=0.5, ge=0.0, le=1.0)
     gallery_min_face_px: int = Field(default=80, ge=1)
     gallery_max_faces_per_person: int = Field(default=10, ge=1, le=100)
+
+    # Recognition (ADR-0004, Phase 6), only while switched on in the app. Cosine similarity of
+    # SFace embeddings, best reference face per person: >= accept is AUTHORIZED, <= reject is
+    # UNRECOGNIZED, in between INCONCLUSIVE. Starting points from OpenCV's published 0.363 and four
+    # public-domain portraits (same person 0.617, different people 0.118-0.194); must be measured
+    # on the real camera before relying on them. Faces smaller than recognition_min_face_px are
+    # INCONCLUSIVE without matching.
+    recognition_accept_threshold: float = Field(default=0.45, ge=-1.0, le=1.0)
+    recognition_reject_threshold: float = Field(default=0.30, ge=-1.0, le=1.0)
+    recognition_min_face_px: int = Field(default=40, ge=1)
+
+    @model_validator(mode="after")
+    def _thresholds_ordered(self) -> "Settings":
+        if self.recognition_reject_threshold >= self.recognition_accept_threshold:
+            raise ValueError("RECOGNITION_REJECT_THRESHOLD must be below RECOGNITION_ACCEPT_THRESHOLD")
+        return self
 
     session_ttl_hours: int = 12
     # Set to false only for plain-HTTP local development.

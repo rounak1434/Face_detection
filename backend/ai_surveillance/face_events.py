@@ -15,8 +15,10 @@ on each new one (face_detection.py) and stores the result:
   media/faces with server-generated names. Files are written before the rows; if the
   rows cannot be written, the files are removed again.
 - Retention: FACE_EVENT_RETENTION_DAYS, files first, then the row, one commit each.
-
-Detection only: nothing here says who a face belongs to.
+- Recognition (Phase 6, recognition.py): only while the switch is on. Each poll first
+  embeds reference faces that have no embedding yet and loads the gallery; each event is
+  then analysed with /v1/embed and every face is matched. With the switch off only
+  /v1/detect is called and faces are stored as NOT_MATCHED. Event embeddings are not stored.
 """
 
 import asyncio
@@ -29,9 +31,11 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
+from . import recognition
 from .captures import InsufficientStorage, check_free_space
 from .config import Settings
-from .db import FaceDetection, FaceEvent, as_utc, new_id, utcnow
+from .credentials import CredentialCipher
+from .db import FaceDetection, FaceEvent, Person, as_utc, new_id, utcnow
 from .face_detection import FACES_DETECTED, GAVE_UP, EventFaces, detect_event_faces
 from .frigate_client import FrigateClient, FrigateError, PersonEvent
 from .inference_client import InferenceClient, InferenceUnavailable
@@ -58,8 +62,29 @@ class Ingestor:
     inference: InferenceClient
     sessions: sessionmaker
     store: MediaStore
+    cipher: CredentialCipher | None = None  # with gallery_store: needed for recognition
+    gallery_store: MediaStore | None = None
     attempts: dict[str, int] = field(default_factory=dict)  # Frigate event id -> temporary failures
+    embed_failures: set[str] = field(default_factory=set)  # reference faces that could not be embedded
     _last_problem: str | None = None
+
+    async def _gallery(self) -> tuple[bool, recognition.Gallery | None]:
+        """(switch on, gallery to match against or None when recognition cannot run this poll)."""
+        with self.sessions() as db:
+            enabled = recognition.is_enabled(db)
+        if not enabled or self.cipher is None or self.gallery_store is None:
+            return enabled, None
+        embedder, status = await recognition.current_embedder(self.inference)
+        if embedder is None:
+            log.info("Recognition is on but the embedder is not ready (%s); detection only", status)
+            return True, None
+        try:
+            await recognition.embed_missing_references(self.sessions, self.inference, self.cipher, self.gallery_store,
+                                                       self.settings, embedder, self.embed_failures)
+        except InferenceUnavailable as exc:
+            log.info("Recognition is on but reference faces cannot be embedded now (%s); detection only", exc)
+            return True, None
+        return True, recognition.load_gallery(self.sessions, self.cipher, embedder)
 
     def _cursor(self) -> float:
         with self.sessions() as db:
@@ -86,6 +111,8 @@ class Ingestor:
     async def ingest_once(self) -> IngestStats:
         stats = IngestStats()
         after, offset = self._cursor(), 0
+        gallery: recognition.Gallery | None = None
+        enabled = prepared = False
         for _ in range(MAX_PAGES_PER_POLL):
             try:
                 events, returned = await self.frigate.person_events_page(after, PAGE_SIZE, offset)
@@ -104,10 +131,14 @@ class Ingestor:
                     self._problem(str(exc))
                     stats.stopped = "insufficient_storage"
                     return stats
-                result = await self._detect(event)
+                if not prepared:  # once per poll, and only when there is a new event to analyse
+                    enabled, gallery = await self._gallery()
+                    prepared = True
+                result = await self._detect(event, gallery is not None)
                 if result is None:
                     stats.stopped = "temporary_failure"
                     return stats
+                self._match(result, enabled, gallery)
                 try:
                     stored = self.save(result)
                 except (OSError, SQLAlchemyError) as exc:
@@ -122,10 +153,25 @@ class Ingestor:
         self._problem(None)
         return stats
 
-    async def _detect(self, event: PersonEvent) -> EventFaces | None:
+    def _match(self, result: EventFaces, enabled: bool, gallery: recognition.Gallery | None) -> None:
+        """Set each face's match; fix the recognition state when recognition could not run."""
+        if gallery is None:
+            result.recognition_state = recognition.STATE_UNAVAILABLE if enabled else recognition.STATE_OFF
+            return
+        if result.recognition_state == recognition.STATE_DONE and result.faces and result.embedder != gallery.embedder:
+            log.warning("Event %s embedded by %s, gallery by %s: not matched", result.event.id, result.embedder,
+                        gallery.embedder)
+            result.recognition_state = recognition.STATE_UNAVAILABLE
+        if result.recognition_state != recognition.STATE_DONE:
+            return
+        result.embedder = gallery.embedder
+        for face in result.faces:
+            face.match = recognition.match_face(face.box, face.embedding, gallery, self.settings)
+
+    async def _detect(self, event: PersonEvent, recognize: bool = False) -> EventFaces | None:
         """The result, or None to stop this poll and try the event again later."""
         try:
-            return await detect_event_faces(event, self.frigate, self.inference, self.settings)
+            return await detect_event_faces(event, self.frigate, self.inference, self.settings, recognize)
         except (FrigateError, InferenceUnavailable) as exc:
             tries = self.attempts.get(event.id, 0) + 1
             self.attempts[event.id] = tries
@@ -133,7 +179,8 @@ class Ingestor:
                 self._problem(f"event {event.id}: {exc} (try {tries} of {self.settings.face_max_attempts})")
                 return None
             log.warning("Face event %s recorded as %s after %d tries: %s", event.id, GAVE_UP, tries, exc)
-            return EventFaces(event, GAVE_UP, detail=f"not analysed after {tries} tries: {exc}"[:500])
+            return EventFaces(event, GAVE_UP, detail=f"not analysed after {tries} tries: {exc}"[:500],
+                              recognition_state=recognition.STATE_UNAVAILABLE if recognize else recognition.STATE_OFF)
 
     def save(self, result: EventFaces) -> bool:
         """Store one analysed event. False if it was stored meanwhile. Raises OSError/SQLAlchemyError."""
@@ -163,15 +210,26 @@ class Ingestor:
                     frame_width=result.frame_width, frame_height=result.frame_height,
                     detector=f"{result.model.get('name')} {result.model.get('version')}" if result.model else None,
                     detail=result.detail[:500] if result.detail else None,
+                    recognition_state=result.recognition_state,
+                    recognizer=result.embedder if result.recognition_state == recognition.STATE_DONE else None,
                 )
                 db.add(event)
                 db.flush()
-                for position, (face, crop_file) in enumerate(zip(result.faces if keep_images else [], crops, strict=True)):
-                    box = face.box
+                faces = result.faces if keep_images else []
+                # A matched person deleted since the gallery was loaded is not linked.
+                matched = {f.match.person_id for f in faces if f.match is not None and f.match.person_id}
+                existing = set(db.scalars(select(Person.id).where(Person.id.in_(matched)))) if matched else set()
+                for position, (face, crop_file) in enumerate(zip(faces, crops, strict=True)):
+                    box, m = face.box, face.match
                     db.add(FaceDetection(
                         event_id=event.id, position=position, box_x=int(box["x"]), box_y=int(box["y"]),
                         box_w=int(box["w"]), box_h=int(box["h"]), score=face.score,
                         keypoints=json.dumps(face.keypoints5), quality=json.dumps(face.quality), crop_file=crop_file,
+                        outcome=m.outcome if m is not None else recognition.NOT_MATCHED,
+                        person_id=m.person_id if m is not None and m.person_id in existing else None,
+                        similarity=m.similarity if m is not None else None,
+                        accept_threshold=self.settings.recognition_accept_threshold if m is not None else None,
+                        reject_threshold=self.settings.recognition_reject_threshold if m is not None else None,
                     ))
                 db.commit()
             return True

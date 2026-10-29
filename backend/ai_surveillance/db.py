@@ -5,8 +5,8 @@ from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from sqlalchemy import (Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, false,
-                        true)
+from sqlalchemy import (Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, create_engine,
+                        event, false, true)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -109,10 +109,14 @@ class FaceEvent(Base):
     detector: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "yunet 2023mar"
     detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Phase 6: off | unavailable | done; null for events stored before recognition existed.
+    recognition_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    recognizer: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "sface 2021dec"
 
 
 class FaceDetection(Base):
-    """A face found in a face event's frame: where, how confident, how usable. Not who."""
+    """A face found in a face event's frame: where, how confident, how usable; and, when recognition
+    ran, the match outcome against the gallery. The face's embedding itself is never stored."""
 
     __tablename__ = "face_detections"
 
@@ -127,6 +131,25 @@ class FaceDetection(Base):
     keypoints: Mapped[str] = mapped_column(Text)  # JSON, 5 [x, y] pairs
     quality: Mapped[str] = mapped_column(Text)  # JSON: face_px, small_face, touches_edge, sharpness
     crop_file: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # AUTHORIZED | UNRECOGNIZED | INCONCLUSIVE | NOT_MATCHED | SYSTEM_ERROR; null before Phase 6.
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    # The matched person (AUTHORIZED only); cleared when that person is deleted.
+    person_id: Mapped[str | None] = mapped_column(ForeignKey("people.id", ondelete="SET NULL"), nullable=True,
+                                                  index=True)
+    similarity: Mapped[float | None] = mapped_column(Float, nullable=True)  # best cosine similarity found
+    accept_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)  # thresholds used for this face
+    reject_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class AppSetting(Base):
+    """Operator settings changed at runtime (Phase 6: recognition_enabled). Value is JSON."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(64))
 
 
 class Person(Base):
@@ -167,6 +190,9 @@ class ReferenceFace(Base):
     detector: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Phase 6: the face's embedding, AES-256-GCM encrypted like the image, and the model that made it.
+    embedding_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    embedder: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "sface 2021dec"
 
 
 class AuditEntry(Base):

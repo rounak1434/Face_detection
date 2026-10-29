@@ -318,6 +318,37 @@ def test_gallery_revision_downgrades_alone_and_keeps_face_events(db):
     assert db.migrate() == "upgraded"
 
 
+def test_recognition_revision_keeps_events_detections_and_gallery_both_ways(db):
+    command.upgrade(alembic_config(db.engine), "0004_gallery")
+    with db.engine.begin() as conn:
+        conn.execute(text("INSERT INTO face_events (id, frigate_event_id, camera, started_at, ended_at, status, "
+                          "face_count, created_at) VALUES ('e1', '1.0-abc', 'entrance', '2026-10-29 12:00:00', "
+                          "'2026-10-29 12:00:05', 'faces_detected', 1, '2026-10-29 12:00:06')"))
+        conn.execute(text("INSERT INTO face_detections (id, event_id, position, box_x, box_y, box_w, box_h, score, "
+                          "keypoints, quality) VALUES ('d1', 'e1', 0, 1, 2, 30, 40, 0.9, '[]', '{}')"))
+        conn.execute(text("INSERT INTO people (id, display_name, consent_date, consent_note, created_by, "
+                          "created_at, updated_at) VALUES ('p1', 'X', '2026-10-01', 'form', 'admin', "
+                          "'2026-10-01 00:00:00', '2026-10-01 00:00:00')"))
+        conn.execute(text("INSERT INTO reference_faces (id, person_id, image_file, media_type, image_width, "
+                          "image_height, box_x, box_y, box_w, box_h, score, keypoints, quality, created_by, "
+                          "created_at) VALUES ('r1', 'p1', 'f.enc', 'image/jpeg', 10, 10, 1, 1, 5, 5, 0.9, '[]', "
+                          "'{}', 'admin', '2026-10-01 00:00:00')"))
+    assert db.migrate() == "upgraded"
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT id, outcome, person_id FROM face_detections")).all() == [("d1", None, None)]
+        assert conn.execute(text("SELECT recognition_state FROM face_events")).all() == [(None,)]
+        assert conn.execute(text("SELECT embedding_enc FROM reference_faces")).all() == [(None,)]
+    fks = inspect(db.engine).get_foreign_keys("face_detections")
+    assert any(fk["referred_table"] == "people" and fk["options"].get("ondelete") == "SET NULL" for fk in fks)
+    command.downgrade(alembic_config(db.engine), "0004_gallery")
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT id, event_id FROM face_detections")).all() == [("d1", "e1")]
+        assert conn.execute(text("SELECT id FROM face_events")).all() == [("e1",)]
+        assert conn.execute(text("SELECT id FROM reference_faces")).all() == [("r1",)]
+    assert "app_settings" not in inspect(db.engine).get_table_names()
+    assert "outcome" not in {c["name"] for c in inspect(db.engine).get_columns("face_detections")}
+
+
 def test_downgrade_and_upgrade_round_trip(db):
     db.migrate()
     cfg = alembic_config(db.engine)

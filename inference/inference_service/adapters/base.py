@@ -36,3 +36,13 @@ class FaceDetector(Protocol):
     def detect(self, image_bgr: np.ndarray, score_threshold: float, max_faces: int) -> list[DetectedFace]:
         """Faces in `image_bgr`, highest score first, in original image coordinates."""
         ...
+
+
+class FaceEmbedder(Protocol):
+    name: str
+    version: str
+    dimensions: int
+
+    def embed(self, image_bgr: np.ndarray, face: DetectedFace) -> np.ndarray:
+        """L2-normalised float32 vector for one detected face, so cosine similarity is a dot product."""
+        ...

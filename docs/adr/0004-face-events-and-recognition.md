@@ -1,6 +1,6 @@
 # ADR-0004: Face events, authorized-person gallery and recognition (audit and plan)
 
-- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11. The policy decisions (section 7, item 5) were taken on 2026-10-30.
+- Status: **accepted: option B** (our matcher), owner's decision 2026-10-29. Progress: Phase 1 (audit) done; Phase 2 (face detection on events) done, see section 8; Phase 3 (storage, deduplication, retention) done, see section 9; Phase 4 (event API) done, see section 10; Phase 5 (gallery and enrollment) done, see section 11; Phase 6 (recognition and switch) done, see section 12. The policy decisions (section 7, item 5) were taken on 2026-10-30.
 - Date: 2026-10-29, base commit `e8e0755`
 - Supersedes the open "face recognition: decided in milestone 2" point of [ADR-0001](0001-frigate-engine.md).
 
@@ -125,7 +125,7 @@ There is deliberately **no** endpoint that enrolls from an event or crop.
 
 ## 7. Dependencies and blockers
 1. **Decision A or B** (§3). Recommendation B.
-2. **Identity test images**: at least two different people, several images each, public-domain or with written consent, for matching tests and threshold checks. Until then Phase 6 can test only "same image, transformed" versus "no match", which proves the plumbing, not accuracy.
+2. **Identity test images**: resolved for Phase 6 with four public-domain NASA portraits of three people (section 12). That is a sanity check; real accuracy needs consenting people on the real camera (Phase 10).
 3. **SFace download** at image build (38.7 MB, pinned checksum); the inference image grows accordingly.
 4. **Real stack** (Docker, Frigate, the Linux AI PC) for Phase 10; no Docker on this PC.
 5. **Policy decisions** (owner's decisions, 2026-10-30): reference images (and later embeddings) **encrypted at rest** with the existing AES-256-GCM key; **password re-confirmation** for deleting a person and for switching recognition; consent recorded as a **date plus a note** on where the evidence is kept (no document upload); gallery data **kept until deleted**.
@@ -164,3 +164,15 @@ Evidence: `test_face_events.py` (19, mocked Frigate and inference, real SQLite a
 - "Unlinks past matches" (section 5's delete row) has nothing to unlink until Phase 6 adds match results.
 - No route enrolls from an event: checked by a test over the OpenAPI schema (the only write routes under `/api/people` and `/api/face-events` are create person, update person and upload a face) and by a JSON body with a face event id being refused (415).
 Evidence: `test_gallery_api.py` (40 in-process tests with a mocked detector, 1 with the real YuNet in WSL), `test_migrations.py` (0004 downgrades alone and keeps face events).
+
+## 12. Phase 6: recognition and the switch (done, 2026-10-30)
+`inference_service/adapters/sface.py`, `POST /v1/embed`; `backend/ai_surveillance/recognition.py`, `routes/recognition.py`, migration `0005_recognition`; operator description in [RECOGNITION.md](../RECOGNITION.md). Decisions and differences from section 5:
+- **Identity test images** (§7 item 2): three further official NASA portraits from Wikimedia Commons (public domain), downloaded with the owner's approval on 2026-10-30 and recorded in `inference/tests/data/public_domain/README.md`: a second Armstrong photo (1964) plus Aldrin and Collins. Real SFace: same person 0.617; different people 0.118–0.194; the same photo under re-encoding, scaling, brightening and mirroring 0.94–1.0.
+- **Thresholds**: accept 0.45, reject 0.30 (settings). They bracket OpenCV's 0.363 so borderline faces are `INCONCLUSIVE`, and separate the fixtures with margin. Also `INCONCLUSIVE` when two people are above accept, or when the face is under 40 px. Starting points only; Phase 10 measures on the real camera.
+- `/v1/embed` returns detection plus embedding in one pass (the api does not send boxes back); the detector stays separately available, so the OFF path calls `/v1/detect` only, asserted by call counts.
+- Reference embeddings are stored **encrypted** (`embedding_enc`, AES-256-GCM, associated data `reference_embedding:<id>`) per the policy decision; section 5's plain `embedding BLOB` was not used. Enrollment embeds in the same pass when SFace is loaded; otherwise it falls back to detection and the face is embedded later from its encrypted image (re-detected, matched to the enrolled box by overlap ≥ 0.5). Faces that cannot be embedded are skipped for the rest of the process's life instead of being retried every poll.
+- Event embeddings are **not stored**; only outcome, similarity, thresholds used and the matched person. The draft's `model_version` per detection became `face_events.recognizer`.
+- Section 5 said deleted people's matches are "kept as `UNRECOGNIZED`". Changed: they stay `AUTHORIZED` (true at the time) with `person_id` set to null, so the record no longer names the person and does not claim the face was unknown.
+- The switch is `app_settings.recognition_enabled`, read at the start of each poll; switching needs the password (decision 4); switching on embeds pending references first and is refused without a ready embedder or a usable gallery.
+- Migration safety: SQLite foreign keys stay enforced during migrations, so rebuilding a parent table (`face_events`) would cascade-delete its detections. Only the child table `face_detections` is rebuilt; downgrade drops the other columns with native `DROP COLUMN`. Tested with data both ways.
+Evidence: `inference/tests/test_api.py` (6 new `/v1/embed` contract tests), `inference/tests/test_model_sface.py` (4, real SFace), `backend/tests/unit/test_recognition.py` (29 mocked plus 1 end-to-end with real YuNet and SFace: enroll Armstrong 1964 through the API, switch on, ingest three Frigate events: Armstrong 1969 `AUTHORIZED` 0.617, Aldrin 0.178 and Collins 0.118 `UNRECOGNIZED`).

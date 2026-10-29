@@ -1,8 +1,8 @@
 """Face event history: list, filter, view, images, delete (ADR-0004, Phase 4).
 
-Face events are detection results only: where faces were, not who. Every route
-needs a signed-in session. Responses never contain file names, paths or
-anything recognition-related.
+Face events record where faces were and, for events analysed while recognition was
+on (Phase 6), each face's match outcome and matched person. Every route needs a
+signed-in session. Responses never contain file names, paths or embeddings.
 """
 
 import base64
@@ -14,13 +14,14 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
-from ..db import FaceDetection, FaceEvent, as_utc
+from ..db import FaceDetection, FaceEvent, Person, as_utc
 from ..deps import AppState, current_user, get_db, get_state
 from ..face_detection import FACE_EVENT_STATUSES
 from ..face_events import delete_face_event
+from ..recognition import OUTCOMES
 
 router = APIRouter(prefix="/api/face-events", tags=["face-events"], dependencies=[Depends(current_user)])
 log = logging.getLogger(__name__)
@@ -49,7 +50,20 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
         raise HTTPException(422, "Invalid cursor") from None
 
 
-def _detection(event_id: str, d: FaceDetection) -> dict:
+def _recognition(d: FaceDetection, names: dict[str, str]) -> dict | None:
+    if d.outcome is None:
+        return None  # stored before recognition existed
+    return {
+        "outcome": d.outcome,
+        # The matched person (AUTHORIZED only); null also when that person was deleted since.
+        "person": {"id": d.person_id, "display_name": names.get(d.person_id)} if d.person_id else None,
+        "similarity": d.similarity,  # how alike the faces look to the model, not proof of identity
+        "thresholds": {"accept": d.accept_threshold, "reject": d.reject_threshold}
+        if d.accept_threshold is not None else None,
+    }
+
+
+def _detection(event_id: str, d: FaceDetection, names: dict[str, str]) -> dict:
     return {
         "id": d.id,
         "position": d.position,
@@ -58,10 +72,16 @@ def _detection(event_id: str, d: FaceDetection) -> dict:
         "keypoints5": json.loads(d.keypoints),
         "quality": json.loads(d.quality),
         "crop_url": f"/api/face-events/{event_id}/detections/{d.id}/crop" if d.crop_file else None,
+        "recognition": _recognition(d, names),
     }
 
 
-def _event(e: FaceEvent, detections: list[FaceDetection]) -> dict:
+def _names(db: Session, groups) -> dict[str, str]:
+    ids = {d.person_id for detections in groups for d in detections if d.person_id}
+    return dict(db.execute(select(Person.id, Person.display_name).where(Person.id.in_(ids))).all()) if ids else {}
+
+
+def _event(e: FaceEvent, detections: list[FaceDetection], names: dict[str, str]) -> dict:
     return {
         "id": e.id,
         "frigate_event_id": e.frigate_event_id,
@@ -75,7 +95,9 @@ def _event(e: FaceEvent, detections: list[FaceDetection]) -> dict:
         "frame_url": f"/api/face-events/{e.id}/frame" if e.frame_file else None,
         "detector": e.detector,
         "detail": e.detail,
-        "detections": [_detection(e.id, d) for d in detections],
+        "recognition_state": e.recognition_state,  # off | unavailable | done; null before recognition existed
+        "recognizer": e.recognizer,
+        "detections": [_detection(e.id, d, names) for d in detections],
     }
 
 
@@ -114,6 +136,8 @@ def list_face_events(
     has_faces: bool | None = None,
     since: datetime | None = Query(default=None, description="started at or after (ISO 8601; UTC if no offset)"),
     until: datetime | None = Query(default=None, description="started before (ISO 8601; UTC if no offset)"),
+    outcome: str | None = Query(default=None, description="events with at least one face with this outcome"),
+    person_id: str | None = Query(default=None, description="events where this person was recognized"),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None, max_length=256),
     db: Session = Depends(get_db),
@@ -133,6 +157,14 @@ def list_face_events(
         query = query.where(FaceEvent.started_at >= _utc(since))
     if until:
         query = query.where(FaceEvent.started_at < _utc(until))
+    if outcome is not None:
+        if outcome not in OUTCOMES:
+            raise HTTPException(422, f"outcome must be one of: {', '.join(sorted(OUTCOMES))}")
+        query = query.where(exists().where(FaceDetection.event_id == FaceEvent.id, FaceDetection.outcome == outcome))
+    if person_id is not None:
+        if not _ID.match(person_id):
+            raise HTTPException(422, "Invalid person_id")
+        query = query.where(exists().where(FaceDetection.event_id == FaceEvent.id, FaceDetection.person_id == person_id))
     if cursor:
         started, event_id = _decode_cursor(cursor)
         query = query.where(or_(FaceEvent.started_at < started,
@@ -140,8 +172,9 @@ def list_face_events(
     rows = list(db.scalars(query.order_by(FaceEvent.started_at.desc(), FaceEvent.id.desc()).limit(limit + 1)))
     page, more = rows[:limit], len(rows) > limit
     detections = _detections_by_event(db, [e.id for e in page])
+    names = _names(db, detections.values())
     return {
-        "items": [_event(e, detections[e.id]) for e in page],
+        "items": [_event(e, detections[e.id], names) for e in page],
         "next_cursor": _encode_cursor(page[-1]) if more else None,
     }
 
@@ -149,7 +182,8 @@ def list_face_events(
 @router.get("/{event_id}")
 def get_face_event(event_id: str, db: Session = Depends(get_db)) -> dict:
     event = _get(db, event_id)
-    return _event(event, _detections_by_event(db, [event.id])[event.id])
+    detections = _detections_by_event(db, [event.id])[event.id]
+    return _event(event, detections, _names(db, [detections]))
 
 
 @router.get("/{event_id}/frame")

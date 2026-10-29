@@ -1,8 +1,9 @@
 """Authorized-person gallery: people with consent records, enrollment from uploads, deletion (ADR-0004, Phase 5).
 
 Every route needs a signed-in session; deleting a person also needs the password again. Reference
-images are stored encrypted and served only through these routes, never cached. Responses carry
-no file names, paths or encrypted data. There is no route that enrolls from a face event or crop.
+images and their embeddings are stored encrypted; images are served only through these routes,
+never cached, and embeddings never leave the server. Responses carry no file names, paths or
+encrypted data. There is no route that enrolls from a face event or crop.
 """
 
 import asyncio
@@ -26,6 +27,7 @@ from ..gallery import (FACE_ENROLLED, PERSON_CREATED, PERSON_UPDATED, Enrollment
                        delete_person, delete_reference_face, image_context, single_face)
 from ..inference_client import InferenceUnavailable
 from ..media import describe_os_error
+from ..recognition import embedder_id, is_embedder_missing, store_reference_embedding
 from .analysis import PASSTHROUGH_ERRORS, _check_headers, _read_upload, error
 
 router = APIRouter(prefix="/api/people", tags=["people"], dependencies=[Depends(current_user)])
@@ -88,6 +90,9 @@ def _face(person_id: str, f: ReferenceFace) -> dict:
         "keypoints5": json.loads(f.keypoints),
         "quality": json.loads(f.quality),
         "detector": f.detector,
+        # Whether an embedding exists for matching, and from which model; never the embedding itself.
+        "embedded": f.embedding_enc is not None,
+        "embedder": f.embedder,
         "created_by": f.created_by,
         "created_at": as_utc(f.created_at).isoformat(),
     }
@@ -232,7 +237,11 @@ async def enroll_face(person_id: str, request: Request, db: Session = Depends(ge
         if isinstance(data, JSONResponse):
             return data
         try:
-            resp = await state.inference.detect(data, settings.gallery_other_face_score, _DETECT_MAX_FACES)
+            # The embedding comes with the same pass when SFace is loaded; without it the image is
+            # still enrolled and embedded later (recognition.embed_missing_references).
+            resp = await state.inference.embed(data, settings.gallery_other_face_score, _DETECT_MAX_FACES)
+            if is_embedder_missing(resp):
+                resp = await state.inference.detect(data, settings.gallery_other_face_score, _DETECT_MAX_FACES)
         except InferenceUnavailable as exc:
             return error(503, "inference_unavailable", str(exc))
     finally:
@@ -273,6 +282,9 @@ async def enroll_face(person_id: str, request: Request, db: Session = Depends(ge
         detector=" ".join(str(model[k]) for k in ("name", "version") if model.get(k)) or None,
         created_by=user.username,
     )
+    embedder = embedder_id(result.get("embedder"))
+    if candidate.embedding is not None and embedder:
+        store_reference_embedding(db, state.cipher, face, candidate.embedding, embedder)
     try:
         db.add(face)
         audit(db, user.username, FACE_ENROLLED, "reference_face", face_id, f"person {person.id}")
