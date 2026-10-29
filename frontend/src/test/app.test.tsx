@@ -89,4 +89,57 @@ describe("Captures", () => {
     await waitFor(() => expect(screen.getByText("No recordings found")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Clip 10 s/ })).toBeDisabled();
   });
+
+  const snapshot = {
+    id: "s1", camera: "entrance", kind: "snapshot", status: "ready", created_at: "2026-10-22T10:00:00Z",
+    size_bytes: 2000, duration_seconds: null, error: null, file_url: "/api/captures/s1/file",
+  };
+
+  it("deletes a capture after confirmation and reloads the list", async () => {
+    const routes: Record<string, Route> = {
+      "GET /api/captures": { status: 200, body: [snapshot] },
+      "DELETE /api/captures/s1": { status: 204 },
+    };
+    const calls = mockFetch(routes);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    render(<Captures refreshKey={0} />);
+    const del = await screen.findByRole("button", { name: /Delete snapshot from entrance/ });
+    routes["GET /api/captures"] = { status: 200, body: [] };
+    fireEvent.click(del);
+    expect(await screen.findByText("No snapshots or clips yet.")).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(calls).toContainEqual({ method: "DELETE", path: "/api/captures/s1" });
+  });
+
+  it("does nothing when the deletion is cancelled", async () => {
+    const calls = mockFetch({ "GET /api/captures": { status: 200, body: [snapshot] } });
+    vi.stubGlobal("confirm", vi.fn(() => false));
+    render(<Captures refreshKey={0} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Delete snapshot/ }));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(screen.getByRole("button", { name: /Snapshot/ })).toBeInTheDocument();
+  });
+
+  it("cannot delete a clip that is still being saved", async () => {
+    mockFetch({
+      "GET /api/captures": {
+        status: 200,
+        body: [{ ...snapshot, id: "c1", kind: "clip", status: "pending", duration_seconds: 10, file_url: null }],
+      },
+    });
+    render(<Captures refreshKey={0} />);
+    expect(await screen.findByRole("button", { name: /Delete clip from entrance/ })).toBeDisabled();
+  });
+
+  it("shows the server's reason when a deletion fails", async () => {
+    mockFetch({
+      "GET /api/captures": { status: 200, body: [snapshot] },
+      "DELETE /api/captures/s1": { status: 500, body: { detail: "Could not delete the file: Permission denied" } },
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<Captures refreshKey={0} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Delete snapshot/ }));
+    expect(await screen.findByText("Could not delete the file: Permission denied")).toBeInTheDocument();
+  });
 });

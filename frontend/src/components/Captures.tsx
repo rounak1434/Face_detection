@@ -26,6 +26,18 @@ export function Captures({ refreshKey }: { refreshKey: number }) {
     load();
   }, [load, refreshKey]);
 
+  const remove = async (c: Capture) => {
+    const what = c.kind === "clip" ? "clip" : "snapshot";
+    if (!window.confirm(`Delete this ${what} from ${c.camera}? The file is removed permanently.`)) return;
+    try {
+      await api.deleteCapture(c.id);
+      if (open?.id === c.id) setOpen(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const hasPending = items.some((c) => c.status === "pending");
   useEffect(() => {
     if (!hasPending) return;
@@ -40,13 +52,22 @@ export function Captures({ refreshKey }: { refreshKey: number }) {
       {items.length === 0 && !error && <p className="muted">No snapshots or clips yet.</p>}
       <ul className="captures">
         {items.map((c) => (
-          <li key={c.id}>
+          <li key={c.id} className="capture-item">
             <button className="capture-row" disabled={c.status !== "ready"} onClick={() => setOpen(c)}>
               <span className={`pill pill-${c.status}`}>{c.status}</span>
               <span>{c.kind === "clip" ? `Clip ${c.duration_seconds ?? ""} s` : "Snapshot"}</span>
               <span className="muted">{c.camera}</span>
               <span className="muted">{new Date(c.created_at).toLocaleString()}</span>
               <span className="muted">{c.status === "failed" ? c.error : formatSize(c.size_bytes)}</span>
+            </button>
+            <button
+              className="secondary danger"
+              disabled={c.status === "pending"}
+              title={c.status === "pending" ? "Can be deleted when saving has finished" : undefined}
+              aria-label={`Delete ${c.kind === "clip" ? "clip" : "snapshot"} from ${c.camera}, ${new Date(c.created_at).toLocaleString()}`}
+              onClick={() => remove(c)}
+            >
+              Delete
             </button>
           </li>
         ))}

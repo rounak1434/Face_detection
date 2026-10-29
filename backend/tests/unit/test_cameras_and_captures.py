@@ -276,6 +276,63 @@ def test_startup_removes_partial_files_left_by_an_interrupted_capture(settings, 
     assert sorted(p.name for p in captures.iterdir()) == sorted([kept.name, other.name])
 
 
+def test_delete_snapshot_removes_row_and_file(signed_in, settings):
+    capture = signed_in.post("/api/cameras/entrance/snapshot").json()
+    stored = settings.media_root / "captures" / f"{capture['id']}.jpg"
+    assert stored.is_file()
+    resp = signed_in.delete(f"/api/captures/{capture['id']}")
+    assert resp.status_code == 204
+    assert not stored.exists()
+    assert signed_in.get(f"/api/captures/{capture['id']}").status_code == 404
+    assert signed_in.get(capture["file_url"]).status_code == 404
+    assert signed_in.get("/api/captures").json() == []
+
+
+def test_delete_failed_capture(signed_in, frigate):
+    frigate.get("/api/entrance/latest.jpg").respond(500, json={"message": "Unable to get valid frame"})
+    signed_in.post("/api/cameras/entrance/snapshot")
+    failed = signed_in.get("/api/captures").json()[0]
+    assert failed["status"] == "failed"
+    assert signed_in.delete(f"/api/captures/{failed['id']}").status_code == 204
+    assert signed_in.get("/api/captures").json() == []
+
+
+def test_delete_unknown_capture_is_404(signed_in):
+    assert signed_in.delete("/api/captures/does-not-exist").status_code == 404
+
+
+def test_delete_requires_sign_in(client, signed_in):
+    capture = signed_in.post("/api/cameras/entrance/snapshot").json()
+    client.cookies.clear()
+    assert client.delete(f"/api/captures/{capture['id']}").status_code == 401
+
+
+def test_delete_refused_while_clip_is_pending(signed_in, frigate):
+    _queue_export(frigate)
+    frigate.get("/api/jobs/export/entrance_abc").respond(200, json={"status": "running"})
+    capture = signed_in.post("/api/cameras/entrance/clip", json={}).json()
+    resp = signed_in.delete(f"/api/captures/{capture['id']}")
+    assert resp.status_code == 409
+    assert signed_in.get(f"/api/captures/{capture['id']}").status_code == 200
+
+
+def test_delete_keeps_the_record_when_the_file_cannot_be_removed(signed_in, settings, monkeypatch):
+    capture = signed_in.post("/api/cameras/entrance/snapshot").json()
+    stored = settings.media_root / "captures" / f"{capture['id']}.jpg"
+
+    def refuse(self, missing_ok=False):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    resp = signed_in.delete(f"/api/captures/{capture['id']}")
+    monkeypatch.undo()
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert "Permission denied" in detail and str(settings.media_root) not in detail
+    assert stored.is_file()  # nothing lost, nothing orphaned: the record still points at it
+    assert signed_in.get(f"/api/captures/{capture['id']}").json()["status"] == "ready"
+
+
 @pytest.mark.parametrize("seconds", [0, 61, -5])
 def test_clip_length_limits(signed_in, seconds):
     resp = signed_in.post("/api/cameras/entrance/clip", json={"seconds": seconds})

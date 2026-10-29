@@ -77,6 +77,8 @@ input {
 .message { font-size: 0.875rem; margin: 0.5rem 0 0; }
 
 .captures { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.capture-item { display: flex; gap: 6px; align-items: stretch; }
+.capture-item .capture-row { flex: 1; min-width: 0; }
 .capture-row {
   width: 100%; display: grid; grid-template-columns: 80px 1fr 1fr 1.4fr 1.4fr; gap: 0.5rem; align-items: center;
   text-align: left; background: transparent; color: var(--text); border: 1px solid var(--border);

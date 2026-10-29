@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +12,7 @@ from ..db import Capture, as_utc
 from ..deps import AppState, current_user, get_db, get_state, known_camera
 
 router = APIRouter(prefix="/api", tags=["captures"], dependencies=[Depends(current_user)])
+log = logging.getLogger(__name__)
 
 
 class ClipRequest(BaseModel):
@@ -75,6 +77,32 @@ def get_capture(capture_id: str, db: Session = Depends(get_db)) -> dict:
     if capture is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Capture not found")
     return _to_dict(capture)
+
+
+@router.delete("/captures/{capture_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_capture(capture_id: str, db: Session = Depends(get_db), state: AppState = Depends(get_state)) -> None:
+    capture = db.get(Capture, capture_id)
+    if capture is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Capture not found")
+    if capture.status == "pending":
+        # The background export may still write its file.
+        raise HTTPException(status.HTTP_409_CONFLICT, "The clip is still being saved; delete it when it has finished")
+    # File first, then the record: if the file cannot be removed, the record
+    # stays and still points at it, so nothing is orphaned on disk.
+    if capture.file_name:
+        try:
+            state.store.delete(capture.file_name)
+        except ValueError:
+            log.warning("Capture %s has an invalid file name; removing the record only", capture_id)
+        except OSError as exc:
+            log.warning("Capture %s: file could not be removed: %s", capture_id, exc)
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                f"Could not delete the file: {exc.strerror or type(exc).__name__}",
+            ) from exc
+    db.delete(capture)
+    db.commit()
+    log.info("Capture %s deleted", capture_id)
 
 
 @router.get("/captures/{capture_id}/file")

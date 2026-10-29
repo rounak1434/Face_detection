@@ -199,6 +199,7 @@ export const api = {
   clip: (camera: string, seconds: number) =>
     request<Capture>(`${cam(camera)}/clip`, { method: "POST", body: JSON.stringify({ seconds }) }),
   captures: () => request<Capture[]>("/api/captures"),
+  deleteCapture: (id: string) => request<void>(`/api/captures/${encodeURIComponent(id)}`, { method: "DELETE" }),
   devices: () => request<Device[]>("/api/devices"),
   createDevice: (input: DeviceInput) =>
     request<Device>("/api/devices", { method: "POST", body: JSON.stringify(input) }),

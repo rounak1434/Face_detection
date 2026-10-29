@@ -12,7 +12,7 @@ All processing and evidence storage stay on your own hardware. Nothing is sent t
 - Live view in the browser (MSE over a websocket), with a still-frame fallback.
 - **Snapshot** button: saves the current frame.
 - **Save 10 s clip** button: exports the last 10 seconds from the recordings.
-- A captures gallery with an image viewer and video player.
+- A captures gallery with an image viewer and video player. Captures can be deleted, after a confirmation, to free disk space.
 - An RTSP probe tool (`ai-surveillance probe`) that reports the codec, resolution and frame rate it actually decoded. Credentials are masked in its output.
 - A synthetic RTSP test stream, for testing without camera hardware.
 - An **AI analysis** page that detects faces in an uploaded image with a real model (YuNet, MIT licence). It shows boxes, 5 keypoints and face crops, and stores nothing. See [docs/AI-ANALYSIS.md](docs/AI-ANALYSIS.md).
