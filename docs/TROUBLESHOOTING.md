@@ -6,6 +6,8 @@ cd ~/ai-surveillance/deploy && bash doctor.sh
 ```
 
 ## Docker and startup errors
+- **`Pool overlaps with other one on this network`** or **`invalid pool request`** when the stack starts: the web↔api `edge` network uses `172.31.250.0/29` by default and something on this host already uses that range. Set a free range in `.env`, for example `EDGE_SUBNET=172.31.251.0/29` and `WEB_EDGE_IP=172.31.251.2` (the address must be inside the subnet and not its first address), then `docker compose up -d`.
+- **Everyone is locked out together after a few wrong passwords**: the api is not seeing the browser's address. Check that `FORWARDED_ALLOW_IPS` and the web container's `ipv4_address` are the same value (`docker compose config --quiet` must pass; never paste the full config output, it contains `.env` values).
 | Symptom | Cause and fix |
 |---|---|
 | `permission denied while trying to connect to the Docker daemon socket` | Your user is not in the `docker` group yet. Run `sudo usermod -aG docker $USER`, then log out and back in (or run `newgrp docker`). |

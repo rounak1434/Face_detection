@@ -186,6 +186,48 @@ def test_caddy_proxies_to_api_port():
     assert '"--port", "8000"' in dockerfile
 
 
+def _default(value: str) -> str:
+    """The default of a ${VAR:-default} expression."""
+    match = re.fullmatch(r"\$\{[A-Z_]+:-([^}]+)\}", value)
+    assert match, value
+    return match.group(1)
+
+
+def _networks(service: dict) -> set[str]:
+    nets = service.get("networks", [])
+    return set(nets) if isinstance(nets, list) else set(nets)
+
+
+def test_forwarded_headers_are_trusted_only_from_the_web_proxy(compose):
+    services = compose["services"]
+    api_env = services["api"]["environment"]
+    web_address = services["web"]["networks"]["edge"]["ipv4_address"]
+    assert api_env["FORWARDED_ALLOW_IPS"] == web_address == "${WEB_EDGE_IP:-172.31.250.2}"
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
+    cmd = dockerfile[dockerfile.index("CMD ["):]
+    assert '"--proxy-headers"' in cmd
+    assert "--forwarded-allow-ips" not in cmd and '"*"' not in cmd  # trust comes only from FORWARDED_ALLOW_IPS
+
+
+def test_only_web_and_api_share_the_edge_network(compose):
+    members = {name for name, svc in compose["services"].items() if "edge" in _networks(svc)}
+    assert members == {"web", "api"}
+    assert _networks(compose["services"]["web"]) == {"edge"}  # the proxy cannot reach Frigate or inference
+    assert _networks(compose["services"]["api"]) == {"internal", "edge"}
+
+
+def test_the_trusted_address_fits_the_edge_subnet_and_stays_out_of_device_tests(compose):
+    import ipaddress
+
+    subnet = ipaddress.ip_network(_default(compose["networks"]["edge"]["ipam"]["config"][0]["subnet"]))
+    address = ipaddress.ip_address(_default(compose["services"]["web"]["networks"]["edge"]["ipv4_address"]))
+    assert address in subnet and address not in (subnet.network_address, subnet.broadcast_address)
+    assert address != next(subnet.hosts())  # .1 is Docker's gateway for the network
+    allowed = _default(compose["services"]["api"]["environment"]["DEVICE_ALLOWED_NETWORKS"])
+    assert not any(subnet.overlaps(ipaddress.ip_network(n)) for n in allowed.split(","))
+    assert not any(subnet.overlaps(ipaddress.ip_network(n)) for n in _env_example()["DEVICE_ALLOWED_NETWORKS"].split(","))
+
+
 def test_inference_service_is_internal_and_reachable_by_api(compose):
     inference = compose["services"]["inference"]
     assert "ports" not in inference, "the inference service must not be published"

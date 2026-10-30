@@ -5,7 +5,8 @@
 #   docker compose down                           # stop, keeping data
 #   add -f compose.yaml -f compose.nvidia.yaml    # optional: give Frigate the NVIDIA GPU
 #
-# Only the web container publishes ports to the LAN. Frigate's unauthenticated
+# Only the web container publishes ports to the LAN, and only it shares the edge network
+# with the api. Frigate's unauthenticated
 # port 5000 stays on the internal network; its authenticated UI (8971) is bound
 # to the host's loopback for administrator use over SSH tunnel.
 
@@ -98,6 +99,9 @@ services:
       INFERENCE_URL: http://inference:8100
       INFERENCE_API_TOKEN: ${INFERENCE_API_TOKEN:-}
       ANALYSIS_MAX_IMAGE_BYTES: ${ANALYSIS_MAX_IMAGE_BYTES:-10485760}
+      # Trust X-Forwarded-For (the browser's address, used for the sign-in lockout) only from
+      # the web proxy's fixed address on the edge network, not from any container.
+      FORWARDED_ALLOW_IPS: ${WEB_EDGE_IP:-172.31.250.2}
       TZ: ${TZ:-UTC}
     # A named volume, so the non-root api user owns it (a bind mount would
     # be created root-owned and the service could not write its database).
@@ -111,7 +115,8 @@ services:
       timeout: 10s
       retries: 3
     depends_on: [frigate, inference]
-    networks: [internal]
+    # internal: Frigate and inference; edge: only the web proxy (see the networks section).
+    networks: [internal, edge]
 
   # Face models (YuNet detection, SFace embeddings). Models are downloaded and verified
   # when the image is built; at run time it needs no internet and keeps no
@@ -141,7 +146,10 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
     depends_on: [api]
-    networks: [internal]
+    # Only on the edge network, at a fixed address the api trusts for X-Forwarded-For.
+    networks:
+      edge:
+        ipv4_address: ${WEB_EDGE_IP:-172.31.250.2}
 
   # Synthetic RTSP source for testing without camera hardware.
   test-stream:
@@ -156,6 +164,15 @@ services:
 
 networks:
   internal: {}
+  # web <-> api only. A fixed subnet is needed so the web proxy can have a fixed address
+  # (ipv4_address) that the api trusts for X-Forwarded-For; no other container joins it.
+  # It lies in 172.16.0.0/12, which DEVICE_ALLOWED_NETWORKS leaves out, so device tests can never
+  # reach it. If Docker reports "Pool overlaps with other one on this network", set EDGE_SUBNET and
+  # WEB_EDGE_IP in .env to a free range (the address must be inside the subnet).
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.31.250.0/29}
 
 volumes:
   api-data: {}

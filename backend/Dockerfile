@@ -16,4 +16,6 @@ USER app
 VOLUME /data
 EXPOSE 8000
 
-CMD ["uvicorn", "--factory", "ai_surveillance.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# X-Forwarded-For is trusted only from the addresses in FORWARDED_ALLOW_IPS (uvicorn's own
+# variable; default 127.0.0.1,::1). Compose sets it to the web proxy's fixed address.
+CMD ["uvicorn", "--factory", "ai_surveillance.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

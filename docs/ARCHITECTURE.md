@@ -56,6 +56,7 @@
 | Concern | Measure |
 |---|---|
 | Operator access | Single admin account (more roles in a later milestone): argon2id, minimum 12-character password, per-client lockout after 5 failures, httpOnly + Secure + SameSite=Strict session cookie, server-side sessions stored as SHA-256 hashes. |
+| Client address behind the proxy | Caddy ignores client-supplied `X-Forwarded-*` and sets them itself (its documented default). The api trusts `X-Forwarded-For` only from Caddy's fixed address on a separate `edge` network that only web and api join (`FORWARDED_ALLOW_IPS`), so the sign-in lockout counts per browser and no other container can choose its address. |
 | Engine exposure | Frigate port 5000 is unauthenticated, so it is never published. Port 8971 is bound to loopback. The browser never contacts Frigate. |
 | Camera credentials | Kept only in `deploy/.env` (gitignored, chmod 600) and passed only to the Frigate container. API responses never include stream URLs. Probe output masks `user:pass@`. |
 | Transport | HTTPS via Caddy's local CA. HSTS, CSP, no framing. |
