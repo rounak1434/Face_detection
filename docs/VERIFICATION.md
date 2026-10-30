@@ -358,6 +358,16 @@ Container engines: **none** (`docker`, `podman`, `docker-compose`, `nerdctl` abs
 | Docker build, `compose config`, startup, Frigate, go2rtc, real camera | **Blocked** | **Blocked** |
 The reproducible host checklist is [LINUX-TEST-CHECKLIST.md](LINUX-TEST-CHECKLIST.md).
 
+## Pre-deployment hardening, 2026-10-30, base `c57161b`
+Three focused commits, each verified with its own tests before committing; then the full regression at `b5b6a17`.
+| Commit | Change | Evidence |
+|---|---|---|
+| `cc1b23a` | `GET /api/recognition` reports `people`, `reference_faces`, `pending` as `null` (`counts_known: false`) plus `total_reference_faces` while the embedder is unavailable; the People page says the counts are unknown | `test_unavailable_embedder_reports_unknown_counts_not_all_pending` (inference unreachable → unknown counts, switch-on refused 409, embeddings unchanged, accurate counts when inference returns; would have shown 3 pending before the fix); vitest "shows unknown counts, not 'all pending' …" |
+| `5854d16` | api trusts `X-Forwarded-For` only from the web proxy: `FORWARDED_ALLOW_IPS=${WEB_EDGE_IP:-172.31.250.2}`, image no longer passes `--forwarded-allow-ips "*"`; web and api share a separate `edge` network (`${EDGE_SUBNET:-172.31.250.0/29}`), web only on it with a fixed address. Facts checked first: uvicorn 0.54 reads `FORWARDED_ALLOW_IPS` (default loopback) and accepts networks; Caddy ignores client `X-Forwarded-*` by default (its reverse_proxy docs) | `test_proxy_trust.py` (4, uvicorn's real `ProxyHeadersMiddleware` with the address read from Compose: lockout per browser behind the proxy; the header from another container ignored and unable to lock out the browsers it names; control showing the counter is shared); `test_deploy_config.py` topology checks (address = trusted value, only web+api on edge, address inside the subnet and not the gateway, subnet outside `DEVICE_ALLOWED_NETWORKS`) |
+| `b5b6a17` | web health check on Caddy's admin API (`wget http://localhost:2019/config/`; documented default address; `caddy:2.8.4-alpine` is built `FROM alpine:3.20`, verified in caddy-docker at `645721b4b8`); Frigate keeps its image's HEALTHCHECK (`curl http://127.0.0.1:5000/api/version`, verified in Frigate's `docker/main/Dockerfile` at v0.18.2, stage `deps`, inherited by `-tensorrt`) | `test_every_long_running_service_has_a_health_check` |
+
+Regression at `b5b6a17`: Windows backend **640 passed, 13 skipped**, inference **67 passed, 1 skipped**, frontend **69 passed**, `tsc` and build OK, `ruff` clean, sensitive suites (proxy, auth, deploy config, switch, privacy, audit, recognition, Apply, concurrency) **161 passed ×3**; Linux (fresh clone of `b5b6a17`) backend **649 passed, 4 skipped**, real-model tests **5 passed**, migrations **109 passed**, face suites incl. proxy and deploy config **196 passed ×3**, Apply/secrets/concurrency **69 ×3**, static Compose valid (0 schema errors, 0 problems, negative controls caught). No container engine on either machine: the health checks, the edge network and the forwarded-header trust have **not** run on Docker. Diff since `c57161b`: 15 intended files, no database, `.env`, key or media files, no secrets. Commit messages written without a byte-order mark and checked (`66 69 78` = "fix").
+
 ## To fill in on the Ubuntu host
 ```
 Date:

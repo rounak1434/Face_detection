@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `9e2581a`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `b5b6a17`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -25,7 +25,7 @@ Labels: **Done (verified)** tested here; **Done (tests only)** implemented, test
 | Database migrations | Done (verified) | Alembic baseline plus `0002_device_use_in_frigate`, `0003_face_events`, `0004_gallery`, `0005_recognition`; `test_migrations.py`. |
 | Backup, verify, restore, interruption handling, recovery copies | Done (verified: Windows + Linux/WSL) | `dbtools.py`; `test_dbtools.py` (79); 41-check drill. Power loss and real signals: not shown. |
 | Configuration and secrets | Done (tests only) | pydantic settings; `.env` gitignored; per-service env lists in compose; api ↔ inference bearer token (`INFERENCE_API_TOKEN`); `test_deploy_config.py`, `test_inference_token.py`. |
-| Health checks | Partial | api (compose) and inference (Dockerfile) have health checks; none is defined for frigate or web in this repository (whether their images ship one is unchecked). |
+| Health checks | Done (static checks only) | api (Compose), inference (Dockerfile), web (Caddy admin API `localhost:2019/config/`, Compose), Frigate (its own image's HEALTHCHECK, verified in the v0.18.2 Dockerfile; Compose sets none so it is not overridden); `test_every_long_running_service_has_a_health_check`. Never observed running (no Docker). |
 | Logging | Partial | Plain stdout logging; no rotation config beyond Docker's default. |
 | Start after reboot | Done (docs only) | `restart: unless-stopped` + systemd unit; Blocked: not run on the host. |
 | Desktop launcher | Not in scope | This product is a web app served by Docker; there is no desktop launcher in this repository. |
@@ -88,6 +88,9 @@ Everything this development PC can run passes on Windows and Linux (WSL), three 
 | One administrator account, no roles; image views not audited; audit log has no retention | Accepted for this milestone |
 | A tiny window remains between the enrollment re-check and its commit for the per-person limit (two uploads committing in the same instant) | Accepted: uploads that pass the re-check within milliseconds of each other could still exceed the limit; it only bounds storage, it is not a security control |
 | FFmpeg licence inside the Frigate and mediamtx images, transitive npm licences | Not verified (LICENSES.md) |
+| Any container on the internal network could forge `X-Forwarded-For` (uvicorn `--forwarded-allow-ips "*"`) | **Resolved** `5854d16`: trusted only from the web proxy's fixed address on a separate edge network; tested with uvicorn's middleware; never observed on Docker |
+| Recognition panel showed every reference image as pending while inference was down | **Resolved** `cc1b23a`: counts reported as unknown |
+| The edge network's fixed subnet (`172.31.250.0/29`) could collide with an existing network on the host | Open until the first start on the AI PC; configurable (`EDGE_SUBNET`, `WEB_EDGE_IP`), documented in TROUBLESHOOTING |
 | Whole stack never run with Docker, Frigate or a real camera | Blocked: Phase 10 |
 
 ## Deployment blockers
