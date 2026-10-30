@@ -119,6 +119,8 @@ class Ingestor:
         after, offset = self._cursor(), 0
         embedder: str | None = None
         prepared = False  # _prepare_recognition ran in this poll
+        listed: set[str] = set()  # every event id Frigate listed in this poll
+        complete = False  # the whole window was listed (the last page was not full)
         for _ in range(MAX_PAGES_PER_POLL):
             try:
                 events, returned = await self.frigate.person_events_page(after, PAGE_SIZE, offset)
@@ -127,6 +129,7 @@ class Ingestor:
                 stats.stopped = "frigate_unavailable"
                 return stats
             known = self._known([e.id for e in events])
+            listed.update(e.id for e in events)
             for event in events:
                 if event.id in known:
                     stats.known += 1
@@ -157,8 +160,13 @@ class Ingestor:
                 self.attempts.pop(event.id, None)
                 stats.stored += int(stored)
             if returned < PAGE_SIZE:
+                complete = True
                 break
             offset += PAGE_SIZE
+        if complete:
+            # Retry counters of events Frigate no longer lists (deleted by its retention or by hand)
+            # would otherwise stay in memory for as long as the api runs.
+            self.attempts = {k: v for k, v in self.attempts.items() if k in listed}
         self._problem(None)
         return stats
 

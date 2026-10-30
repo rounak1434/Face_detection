@@ -333,6 +333,15 @@ New `python -m inference_service.benchmark` and `inference/tests/test_benchmark.
 
 Backend and inference unchanged in this step.
 
+## Second security and reliability audit, 2026-10-30, base `17cfb97`
+Scope and conclusions in ADR-0004 section 20; open risks in RELEASE-READINESS.md. `backend/tests/unit/test_reliability_audit.py` (8). Each defect's test failed before its fix:
+| Defect | Failing evidence before the fix | Test after |
+|---|---|---|
+| Person deleted during enrollment → unhandled `IntegrityError` (500) | `sqlite3.IntegrityError: FOREIGN KEY constraint failed` | 404 `person_deleted`, no file left; deactivation during enrollment → 409, no file left |
+| Per-person limit exceeded by overlapping uploads | second upload answered 201 with the limit already reached | 409 `too_many_faces`, count stays at the limit, no file left |
+| Retry counters of vanished events kept for the life of the api | 3 counters still held after a complete poll | dropped after a complete poll; a counter of a still-listed event is kept |
+Also: symlinks planted in `media/faces` and `media/gallery` refused by the store and the image route answers 404 without the target's content (3 tests, run on Linux; skipped on Windows, where symlinks need privileges). Backend: Windows **631 passed, 13 skipped**; Linux (fresh clone of `17cfb97` + this change) **640 passed, 4 skipped** (symlink tests included), real-model tests 5 passed, face suites 153 passed ×3; inference 67 passed; static Compose valid; `ruff` clean. New: LICENSES.md, GALLERY operator procedure, TROUBLESHOOTING entries.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

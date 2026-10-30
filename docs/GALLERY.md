@@ -15,6 +15,15 @@ Status: Phase 5 (people, consent records, enrollment from uploads, deletion, aud
 - **Kept until deleted.** Gallery data has no expiry. Making a person inactive keeps the record and images but excludes them from matching; deleting removes the images first, then the records and embeddings, and unlinks the person from past matches.
 - **Audit log.** Creating, changing and deleting people, enrolling and removing reference images, and failed password confirmations are recorded with the username, time, action and ids. Changes record field names, not values; no names, notes, consent text or images go into the audit log or the server log.
 
+## Operator procedure
+The software enforces the rules above; these steps are for the people running it.
+1. **Before enrolling:** tell the person what is collected (reference photos, an encrypted face embedding, face events at the cameras), why, how long it is kept, and how to have it removed. Obtain their consent in the form your organisation requires and keep the evidence outside this system.
+2. **Enroll:** add the person with the consent date and where the evidence is kept; upload 2–3 clear photos the person provided or agreed to. Never use images from the cameras.
+3. **Review regularly:** deactivate people who no longer need access (matching stops at once; records stay), and delete people who leave or withdraw consent.
+4. **A person asks to be removed:** delete them on the People page (password required). This removes their images, embeddings and the link from past matches; check the audit log entry. Also delete any older database or `media/gallery` backups that contain them, and note that Frigate's own recordings (3 days) and snapshots (14 days) expire on their own.
+5. **A person asks what is held about them:** the People page shows their record and reference images; the Face events page filtered by person shows the events matched to them. Embeddings are not shown to anyone.
+6. **Switching recognition on** is a decision of the administrator, needs the password, and is logged; record why in your own procedures.
+
 ## API
 All routes need a signed-in session. JSON errors are `{"error", "detail"}` like `/api/analysis/faces`. Responses never contain file names, paths or encrypted data.
 

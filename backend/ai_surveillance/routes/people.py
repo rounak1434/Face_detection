@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import AfterValidator, BaseModel, Field, StrictBool
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..captures import InsufficientStorage, check_free_space
@@ -285,15 +286,40 @@ async def enroll_face(person_id: str, request: Request, db: Session = Depends(ge
     embedder = embedder_id(result.get("embedder"))
     if candidate.embedding is not None and embedder:
         store_reference_embedding(db, state.cipher, face, candidate.embedding, embedder)
+    person_id, username = person.id, user.username
+    # The upload and the detector took a while: the person may have been deactivated or deleted, or
+    # another upload may have reached the limit. End this request's read transaction (it still sees
+    # the state from its start) and check again right before writing.
+    db.rollback()
+    refusal = _recheck(db, person_id, settings.gallery_max_faces_per_person)
+    if refusal is not None:
+        state.gallery_store.delete(file_name)
+        return refusal
     try:
         db.add(face)
-        audit(db, user.username, FACE_ENROLLED, "reference_face", face_id, f"person {person.id}")
+        audit(db, username, FACE_ENROLLED, "reference_face", face_id, f"person {person_id}")
         db.commit()
+    except IntegrityError:  # deleted between the check and the commit
+        db.rollback()
+        state.gallery_store.delete(file_name)
+        return error(404, "person_deleted", "The person was deleted while the image was being checked")
     except Exception:
         state.gallery_store.delete(file_name)  # no file without its row
         raise
-    log.info("Reference face %s enrolled for person %s by %s", face_id, person.id, user.username)
-    return JSONResponse(_face(person.id, face), status_code=201)
+    log.info("Reference face %s enrolled for person %s by %s", face_id, person_id, username)
+    return JSONResponse(_face(person_id, face), status_code=201)
+
+
+def _recheck(db: Session, person_id: str, limit: int) -> JSONResponse | None:
+    person = db.get(Person, person_id)
+    if person is None:
+        return error(404, "person_deleted", "The person was deleted while the image was being checked")
+    if not person.active:
+        return error(409, "person_inactive", "The person was deactivated while the image was being checked")
+    count = db.scalar(select(func.count()).select_from(ReferenceFace).where(ReferenceFace.person_id == person_id))
+    if count >= limit:
+        return error(409, "too_many_faces", f"This person already has {count} reference images (limit {limit})")
+    return None
 
 
 def _media_type(data: bytes) -> str:

@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `cbda309`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `17cfb97`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -72,6 +72,20 @@ Test evidence by kind (do not mix them up):
 - One "Apply to Frigate" with the synthetic source (two restarts, camera listed, no credentials in the tracked template, the live config or logs), then one that removes it, then replacing one device with another; record restart times.
 - In a test environment only: a refused config and Frigate stopped during an apply; the kept copies stay at two at most and stale secret files disappear after a successful apply.
 - CP Plus NVR main/sub streams (models not yet recorded); GTX 1650 detection; start on boot and power recovery.
+- Faces: face events from real person events; reference enrollment and recognition with consenting people; threshold measurement; `python -m inference_service.benchmark` inside the inference container (RECOGNITION.md).
+
+## Open risks after the security and reliability audits (2026-10-30)
+| Risk | Status |
+|---|---|
+| Recognition thresholds measured only on four public-domain photos | Open until Phase 10; documented in RECOGNITION.md |
+| No liveness check (a photo of an enrolled person can match) | Open by design of the chosen model; documented |
+| Deleted image files are unlinked, not overwritten; face-event frames are plain JPEGs | Mitigation: full-disk encryption on the host (SETUP) |
+| Frigate keeps its own snapshots (14 d) and recordings (3 d) outside our deletion | Documented; Frigate retention settings |
+| Backups keep deleted people until the backups are deleted | Documented (GALLERY operator procedure) |
+| One administrator account, no roles; image views not audited; audit log has no retention | Accepted for this milestone |
+| A tiny window remains between the enrollment re-check and its commit for the per-person limit (two uploads committing in the same instant) | Accepted: uploads that pass the re-check within milliseconds of each other could still exceed the limit; it only bounds storage, it is not a security control |
+| FFmpeg licence inside the Frigate and mediamtx images, transitive npm licences | Not verified (LICENSES.md) |
+| Whole stack never run with Docker, Frigate or a real camera | Blocked: Phase 10 |
 
 ## Deployment blockers
 1. No access to the Ubuntu AI PC (SSH destination unknown); no Docker on the dev PC.
