@@ -228,6 +228,21 @@ def test_the_trusted_address_fits_the_edge_subnet_and_stays_out_of_device_tests(
     assert not any(subnet.overlaps(ipaddress.ip_network(n)) for n in _env_example()["DEVICE_ALLOWED_NETWORKS"].split(","))
 
 
+def test_every_long_running_service_has_a_health_check(compose):
+    services = compose["services"]
+    assert "healthcheck" in services["api"]
+    assert "HEALTHCHECK" in (ROOT / "inference" / "Dockerfile").read_text()
+    # Frigate's images bring their own HEALTHCHECK; overriding or disabling it here would hide it.
+    assert "healthcheck" not in services["frigate"]
+    nvidia = yaml.safe_load((DEPLOY / "compose.nvidia.yaml").read_text())
+    assert "healthcheck" not in nvidia["services"]["frigate"]
+    web = services["web"]["healthcheck"]["test"]
+    assert web == ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2019/config/"]
+    caddyfile = (DEPLOY / "caddy" / "Caddyfile").read_text()
+    assert not re.search(r"^\s*admin\s+off", caddyfile, re.M), "the web health check needs Caddy's admin API"
+    assert re.search(r"^FROM caddy:2\.8\.4-alpine$", (ROOT / "frontend" / "Dockerfile").read_text(), re.M)
+
+
 def test_inference_service_is_internal_and_reachable_by_api(compose):
     inference = compose["services"]["inference"]
     assert "ports" not in inference, "the inference service must not be published"

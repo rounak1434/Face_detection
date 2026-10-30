@@ -72,11 +72,12 @@ docker compose exec api ai-surveillance create-admin admin
 bash doctor.sh
 bash run-integration-tests.sh
 ```
-Expect: `frigate-init` Exited (0), everything else running/healthy; `yunet: ready`, `sface: ready`; doctor without errors; integration tests pass.
+Expect: `frigate-init` Exited (0); `api`, `inference`, `web` and `frigate` **(healthy)** — Frigate's check comes from its own image and may show "starting" for up to 5 minutes; `test-stream` running (no health check); `yunet: ready`, `sface: ready`; doctor without errors; integration tests pass. Also check that Caddy saw the browser's address, not its own: after one wrong sign-in from another PC, signing in from this machine must still work.
 
 | Check | Local | Host |
 |---|---|---|
-| All services start and are healthy | **Blocked** | |
+| All services start and are healthy (health checks: api in Compose, inference in its Dockerfile, web on Caddy's admin API, Frigate from its image) | **Blocked**; configuration checked statically (`test_every_long_running_service_has_a_health_check`) | |
+| Forwarded client address trusted only from the web proxy | **Blocked** on the stack; behaviour tested with uvicorn's middleware (`test_proxy_trust.py`) | |
 | `doctor.sh`, `run-integration-tests.sh` | **Blocked** | |
 
 ## 6. Frigate / go2rtc stream

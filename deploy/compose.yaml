@@ -36,7 +36,9 @@ services:
 
   frigate:
     # Standard image (CPU detector). compose.nvidia.yaml switches to the
-    # -tensorrt image and passes the GPU through.
+    # -tensorrt image and passes the GPU through. Both images bring their own HEALTHCHECK
+    # (curl http://127.0.0.1:5000/api/version, 300 s start period; docker/main/Dockerfile at
+    # v0.18.2, stage "deps", which the -tensorrt image also builds on), so none is set here.
     image: ghcr.io/blakeblackshear/frigate:0.18.2
     restart: unless-stopped
     shm_size: "256mb"
@@ -146,6 +148,14 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
     depends_on: [api]
+    # Caddy's admin API (documented default address localhost:2019; caddy:2.8.4-alpine is built on
+    # alpine:3.20, which has BusyBox wget). Shows that Caddy runs with its config loaded; it does not
+    # check the site's certificate or the api behind it (the api has its own health check).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     # Only on the edge network, at a fixed address the api trusts for X-Forwarded-For.
     networks:
       edge:
