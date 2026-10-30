@@ -1,0 +1,70 @@
+# ADR-0003: Feeding saved cameras and NVRs to Frigate
+
+- Status: **accepted** (option A), 2026-10-29
+- Date: 2026-10-29
+
+**Owner's decisions (2026-10-29):** option A; Compose may move Frigate's live config off the tracked file and add the `frigate-secrets` volume; a Frigate restart happens only on an explicit "Apply to Frigate", with a warning; only devices with "Use in Frigate" switched on **and** a successful connection test are applied; the fixed `entrance` camera from `.env` stays alongside the saved devices.
+
+## Context
+
+### How it works today
+- **Saved devices** (`Device` table, `routes/devices.py`): name, kind, host, RTSP port, username, stream paths, and the password encrypted with AES-256-GCM (`credentials.py`). They are used only for connection tests. The browser never receives a password or a credential-bearing URL (`to_dict`).
+- **Frigate's cameras** come from `deploy/frigate/config.yml`, which is **tracked in git** (`.gitignore`: `!deploy/frigate/config.yml`) and **bind-mounted** as Frigate's `/config` (`compose.yaml`: `./frigate:/config`). Stream URLs reach Frigate only through the environment variables `FRIGATE_CAMERA_MAIN_URL`/`_SUB_URL` from `deploy/.env`, via Frigate's `{FRIGATE_*}` substitution. One camera, `entrance`, is fixed in the file.
+
+### What Frigate 0.18.2 offers (checked in the v0.18.2 source on 2026-10-29)
+| Endpoint | Behaviour | Source |
+|---|---|---|
+| `POST /api/config/save?save_option=restart` | Body: the whole YAML as text. **Validated before writing** (`FrigateConfig.parse_yaml`); invalid → 400 "Your configuration is invalid." and the old file is untouched. Overwrites the whole file. New cameras apply only after a restart (`save_option=restart` restarts Frigate). Admin role. | `frigate/api/app.py` `config_save` |
+| `PUT /api/config/set` | Merges keys. **Writes first, then validates**; restores the old file on validation errors, but **not** in its generic 500 path. Can add a camera live with `update_topic`. Admin role. | `frigate/api/app.py` `config_set` |
+| `POST /api/restart` | Restarts Frigate. Admin role. | `frigate/api/app.py` |
+| `GET /api/config` | Masks credentials in camera paths and go2rtc streams. | `frigate/api/app.py` `config` |
+| `GET /api/config/raw`, `/api/config/raw_paths` | Return the raw file and unmasked input paths. Admin role; on the internal port 5000 every caller is admin. | `frigate/api/app.py` |
+| `{FRIGATE_*}` substitution | Values come from environment variables **and from files in `/run/secrets`** (or `$CREDENTIALS_DIRECTORY`) whose names start with `FRIGATE_` (content stripped; files win over variables). Read **once at startup**. | `frigate/config/env.py` |
+
+### Hazards found
+1. **Tracked file.** Both write endpoints write `/config/config.yml`, which on the host is the git-tracked `deploy/frigate/config.yml`. Using them as deployed would modify a tracked file on the host (and conflict with `git pull`).
+2. **Passwords in plain text.** Putting RTSP URLs with credentials into the config stores them in that file and returns them from `/api/config/raw` to anything on the internal network (port 5000).
+3. **Restart needed.** Secrets are read at startup, so new or changed credentials take effect only after a Frigate restart: live view and recording pause for about a minute.
+4. **`config/set` can leave a half-written file** on an unexpected error; `config/save` cannot.
+
+## Options
+| | How | Passwords | Failure safety | Changes needed |
+|---|---|---|---|---|
+| **A (recommended)** | The api renders the full config from a tracked **template** plus the approved devices, using placeholders such as `{FRIGATE_DEV_<id>_MAIN_URL}`; writes each URL into a **secret file** on a volume shared only with Frigate (`/run/secrets`, read-only in Frigate); then `POST /api/config/save?save_option=restart`. | Never in the config file, never in the browser, never in `/api/config/raw`. Visible to Frigate's admin-only `raw_paths`, as the `.env` URLs are today. | Invalid config is refused by Frigate before writing. The api keeps the last applied config and secret files and restores them if Frigate does not come back with the expected cameras. | Compose: Frigate's live config moves off the tracked file (seeded from the template on first start) and a `frigate-secrets` volume is added. DB migration: a per-device "Use in Frigate" flag. |
+| B | Inline URLs via `config/set` with `update_topic` (no restart). | In the config file and `/api/config/raw`. | Half-written file possible. | Same Compose change for the tracked file. |
+| C | Keep `deploy/.env` as today; the setup page only shows the values to copy. | As today. | Manual. | None. |
+| (rejected) | Change Frigate's environment from the api. | — | — | Needs the Docker socket in the api: far too much privilege. |
+
+## Decisions that were needed from the owner (answered above)
+1. **Compose change** (Frigate is protected configuration): move Frigate's live `/config` off the tracked `deploy/frigate/config.yml` to an untracked directory or volume seeded from the template, and add the `frigate-secrets` volume (api read-write, Frigate read-only).
+2. **Restart:** accept a Frigate restart (about a minute without live view and recording) each time the operator presses "Apply to Frigate".
+3. **Approval rule:** only devices with an explicit "Use in Frigate" switch, and only after a successful connection test (`connected`)? Or allow untested devices with a warning?
+4. **The fixed `entrance` camera** from `.env`: keep it alongside saved devices, or replace it once a saved device is applied?
+
+## Planned steps once decided (each tested, committed and pushed on its own)
+1. Pure renderer: template + approved devices → config text with placeholders only; safe camera names; tests prove no password ever appears in the output.
+2. Secret-file writer: atomic writes, owner-only permissions, removal of files for devices no longer used; tests.
+3. Migration and API: the "Use in Frigate" flag, validation, UI switch; tests.
+4. `POST /api/frigate/apply` (sign-in required): render, stage, `config/save?save_option=restart`, verify cameras through `/api/config`, restore the previous config and secrets on any failure; error mapping; tests with a mocked Frigate.
+5. Compose and setup documentation; real-stack verification stays pending until the Ubuntu host is available.
+
+Steps 1–4 are done. Step 4 changed after a second source check:
+
+## Amendment (2026-10-29): two restarts for new devices
+A second check of the v0.18.2 source found that `config/save` refuses any go2rtc stream source that is new compared with the saved file unless its `{FRIGATE_*}` placeholders resolve **in the running Frigate process** (`find_restricted_go2rtc_stream_changes` in `frigate/util/services.py`). Secret files are read only at startup, so the planned single "save with restart" would always be refused for a newly added device. **Owner's decision: two restarts** (alternatives were the api writing Frigate's file directly with one restart and no prior validation, or stopping after step 3).
+
+The apply (`frigate_apply.py`) now:
+1. Builds the config and the secret values first; a password that cannot be decrypted or an invalid template stops here with nothing changed.
+2. Keeps Frigate's current file (`/api/config/raw`, also written owner-only to `FRIGATE_PREVIOUS_CONFIG_FILE`) and the current secret files.
+3. Writes the new secret files.
+4. Only when a secret name is new: `POST /api/restart` and waits until Frigate has stopped and answers again, so it loads the new secrets.
+5. `config/save?save_option=restart` and waits for the restart. A 400 means Frigate kept its file: the previous secret files are put back and the error is shown (passwords and URLs removed from Frigate's message).
+6. Checks that `/api/config/raw` is exactly the saved text and that `/api/config` lists every expected camera.
+7. On any failure after step 3: previous secret files back; if Frigate's file had changed, restart (to load the previous secrets, which `config/save` needs), save the previous config with a restart, and check it. If that also fails, the message names the kept file.
+
+Only one apply runs at a time. Live view and recording pause for about one minute per restart.
+
+## Amendment (2026-10-29, step 5): go2rtc and the order of secret files
+Frigate's go2rtc config is generated at every container start by `docker/main/rootfs/usr/local/go2rtc/create_config.py`, which reads `FRIGATE_*` files from the hard-coded `/run/secrets` and **exits** on a stream placeholder without a value. So whenever Frigate may start, the secret files must cover the config file on disk. The apply therefore writes the previous **and** the new secret files before the first restart (the old file may still refer to a device that is being removed), and removes the unused ones only after Frigate runs the new config; a restore does the same in reverse. If Frigate cannot be reached during a restore, both sets stay.
+
+Compose (step 5): Frigate's live config is `deploy/storage/frigate-config/` (untracked), seeded once from the template by the one-shot `frigate-init` service, which also makes the `frigate-secrets` volume writable only by the api user (uid 10001). Frigate mounts that volume read-only at `/run/secrets` (the path both `env.py` and go2rtc read); the api mounts it at `/frigate-secrets` and the template read-only.

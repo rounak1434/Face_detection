@@ -1,0 +1,29 @@
+# HTTPS entry point. `tls internal` uses Caddy's own local CA; install its root
+# certificate on operator PCs to avoid browser warnings (docs/SETUP.md).
+{$SITE_ADDRESS} {
+	tls internal
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' wss://{host};style-src 'self'; script-src 'self'; frame-ancestors 'none'"
+		-Server
+	}
+
+	handle /api/* {
+		# Uploads (face analysis) are capped in the api at 10 MB; this is an outer bound.
+		request_body {
+			max_size 12MB
+		}
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

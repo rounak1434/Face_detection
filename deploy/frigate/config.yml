@@ -1,0 +1,70 @@
+# Frigate 0.18 configuration for milestone 1: one camera, live restream,
+# continuous recording, snapshots. Stream URLs come from environment
+# variables (deploy/.env) via Frigate's {FRIGATE_*} substitution, so no
+# credentials are stored here.
+#
+# Detection uses Frigate's default CPU detector for now. Switching to the
+# NVIDIA GPU (ONNX + YOLOv9) is a separate, measured step: see the commented
+# block below and docs/SETUP.md.
+
+mqtt:
+  enabled: false # event bus arrives in milestone 2
+
+auth:
+  enabled: true # applies to port 8971; the first admin password is printed in the logs on first start
+
+go2rtc:
+  streams:
+    # The stream names must match the camera name (and <camera>_sub) for
+    # Frigate's restream inputs below to work.
+    entrance:
+      - "{FRIGATE_CAMERA_MAIN_URL}"
+    entrance_sub:
+      - "{FRIGATE_CAMERA_SUB_URL}"
+
+cameras:
+  entrance:
+    enabled: true
+    ffmpeg:
+      inputs:
+        # Read through go2rtc so the camera/NVR sees one connection per stream.
+        - path: rtsp://127.0.0.1:8554/entrance
+          input_args: preset-rtsp-restream
+          roles: [record]
+        - path: rtsp://127.0.0.1:8554/entrance_sub
+          input_args: preset-rtsp-restream
+          roles: [detect]
+    detect:
+      enabled: true
+      width: 1280 # must match the sub stream; set from the probe result
+      height: 720
+      fps: 5
+    live:
+      # The first entry is the stream the web app shows. The sub stream is
+      # lighter and is more likely to be H.264, which every browser plays.
+      streams:
+        Sub: entrance_sub
+        Main: entrance
+    objects:
+      track: [person]
+    record:
+      enabled: true
+      continuous:
+        days: 3 # needed so operator clips can be exported for any moment
+    snapshots:
+      enabled: true
+      retain:
+        default: 14
+
+# --- GPU detector (enable after exporting the model; see docs/SETUP.md) ---
+# detectors:
+#   onnx:
+#     type: onnx
+# model:
+#   model_type: yolo-generic
+#   width: 320
+#   height: 320
+#   input_tensor: nchw
+#   input_dtype: float
+#   path: /config/model_cache/yolo.onnx
+#   labelmap_path: /labelmap/coco-80.txt

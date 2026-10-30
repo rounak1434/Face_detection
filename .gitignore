@@ -1,0 +1,45 @@
+# Secrets and local configuration
+.env
+*.env
+!*.env.example
+deploy/secrets/
+
+# Runtime data: camera footage, captures, databases, models
+media/
+data/
+deploy/storage/
+# deploy/frigate/config.yml is the template; Frigate's live config, database and
+# model cache live in deploy/storage/frigate-config (ignored above).
+deploy/frigate/*
+!deploy/frigate/config.yml
+*.db
+*.sqlite3
+*.onnx
+*.engine
+
+inference/models/
+# Documented, public-domain test fixtures (see the README inside).
+!inference/tests/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
