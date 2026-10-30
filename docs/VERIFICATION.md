@@ -316,6 +316,9 @@ Backend: Windows **595 passed, 10 skipped**; Linux (fresh clone of `c13adb6` + t
 
 Release-preparation changes: `RECOGNITION_ACCEPT_THRESHOLD`, `RECOGNITION_REJECT_THRESHOLD`, `RECOGNITION_MIN_FACE_PX` and `GALLERY_MIN_FACE_PX` are now set in `deploy/.env` (so they can be calibrated on site without a rebuild); `.env.example` no longer says that nobody is identified; README, SETUP (sections 4 and 6), TROUBLESHOOTING (new face section) describe the face features.
 
+## Re-check against the backend-API brief: explicit outcome reasons, 2026-10-30, base `c357cbd`
+Every item of the re-issued backend/persistence brief was already covered (Phases 3–6, 8; see ADR-0004 section 16); the one gap, an explicit "insufficient quality" status, is closed by a derived `reason` on each recognition result (no migration). Tests: `test_recognition.py` +12 (all 10 reasons; ingestion through the API producing `insufficient_quality`, `several_people_match`, `between_thresholds`; `match`/`below_reject_threshold` on the API; `recognition_off` on stored rows), `faces-pages.test.tsx` +1. Backend: Windows **610 passed, 10 skipped**; Linux (fresh clone of `c357cbd` + this change) **616 passed, 4 skipped**, real-model tests **5 passed**, face suites 129 passed ×3; inference 64 passed on both; frontend **61 passed**, build OK (Windows); static Compose unchanged and valid; `ruff` clean.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

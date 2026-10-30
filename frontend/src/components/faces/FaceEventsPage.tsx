@@ -4,7 +4,7 @@ import {
   Person,
 } from "../../api";
 import {
-  formatSimilarity, OUTCOME_CLASS, OUTCOME_HELP, OUTCOME_LABEL, pct, recognitionStateLabel, STATUS_LABEL,
+  formatSimilarity, OUTCOME_CLASS, OUTCOME_HELP, OUTCOME_LABEL, pct, REASON_LABEL, recognitionStateLabel, STATUS_LABEL,
 } from "./labels";
 
 const PAGE_SIZE = 25;
@@ -17,7 +17,7 @@ function OutcomeBadge({ d }: { d: FaceDetectionItem }) {
   const r = d.recognition;
   const who = r.outcome === "AUTHORIZED" ? (r.person ? r.person.display_name ?? "?" : "deleted person") : null;
   return (
-    <span className={`status ${OUTCOME_CLASS[r.outcome]}`} title={OUTCOME_HELP[r.outcome]}>
+    <span className={`status ${OUTCOME_CLASS[r.outcome]}`} title={REASON_LABEL[r.reason] ?? OUTCOME_HELP[r.outcome]}>
       {OUTCOME_LABEL[r.outcome]}{who ? `: ${who}` : ""}
     </span>
   );
@@ -74,6 +74,7 @@ function EventDetail({ event, onClose, onDeleted }: { event: FaceEvent; onClose:
                 {d.crop_url ? <img src={d.crop_url} alt={`Face ${d.position + 1}`} /> : <p className="muted small">No crop</p>}
                 <div className="small">
                   <strong>Face {d.position + 1}</strong> <OutcomeBadge d={d} />
+                  {d.recognition && <><br /><span className="muted">{REASON_LABEL[d.recognition.reason] ?? d.recognition.reason}</span></>}
                   <br />
                   similarity {formatSimilarity(d.recognition?.similarity)}
                   {d.recognition?.thresholds?.accept != null &&

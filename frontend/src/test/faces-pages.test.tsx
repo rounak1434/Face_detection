@@ -29,7 +29,11 @@ afterEach(() => vi.unstubAllGlobals());
 const detection = (id: string, outcome: string | null, person: { id: string; display_name: string | null } | null = null) => ({
   id, position: 0, box: { x: 100, y: 50, w: 80, h: 100 }, score: 0.93, keypoints5: [], quality: { face_px: 80 },
   crop_url: `/api/face-events/e/detections/${id}/crop`,
-  recognition: outcome === null ? null : { outcome, person, similarity: 0.617, thresholds: { accept: 0.45, reject: 0.3 } },
+  recognition: outcome === null ? null : {
+    outcome, person, similarity: 0.617, thresholds: { accept: 0.45, reject: 0.3 },
+    reason: ({ AUTHORIZED: "match", UNRECOGNIZED: "below_reject_threshold", INCONCLUSIVE: "insufficient_quality" } as
+      Record<string, string>)[outcome] ?? "not_performed",
+  },
 });
 
 const ev = (id: string, detections: unknown[], over: Partial<FaceEvent> = {}): FaceEvent => ({
@@ -124,6 +128,7 @@ describe("FaceEventsPage", () => {
     expect(within(dialog).getByAltText("Frame from entrance")).toHaveAttribute("src", "/api/face-events/e1/frame");
     expect(within(dialog).getByLabelText("Face 1")).toHaveStyle({ left: `${(100 / 1920) * 100}%` });
     expect(within(dialog).getByText(/similarity 0.617/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Similar enough to an enrolled person")).toBeInTheDocument();
     expect(within(dialog).getByText(/no liveness check/)).toBeInTheDocument();
 
     const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false);
@@ -136,6 +141,17 @@ describe("FaceEventsPage", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(calls.find((c) => c.method === "DELETE")!.path).toBe("/api/face-events/e1");
     expect(screen.queryByRole("button", { name: /Face event entrance/ })).not.toBeInTheDocument();
+  });
+
+  it("says when a face was too small to compare", async () => {
+    mockFetch((_method, path) =>
+      path.startsWith("/api/people") ? { status: 200, body: { items: [] } }
+        : { status: 200, body: { items: [ev("e9", [detection("d9", "INCONCLUSIVE")])], next_cursor: null } });
+    render(<FaceEventsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Face event entrance/ }));
+    const dialog = screen.getByRole("dialog", { name: "Face event" });
+    expect(within(dialog).getByText("Face too small to compare")).toBeInTheDocument();
+    expect(within(dialog).getByText("Inconclusive")).toHaveAttribute("title", "Face too small to compare");
   });
 
   it("reports an unavailable API", async () => {

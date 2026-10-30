@@ -21,7 +21,7 @@ from ..db import AdminUser, FaceDetection, FaceEvent, Person, as_utc
 from ..deps import AppState, current_user, get_db, get_state
 from ..face_detection import FACE_EVENT_STATUSES
 from ..face_events import delete_face_event
-from ..recognition import OUTCOMES
+from ..recognition import OUTCOMES, outcome_reason
 
 router = APIRouter(prefix="/api/face-events", tags=["face-events"], dependencies=[Depends(current_user)])
 log = logging.getLogger(__name__)
@@ -50,11 +50,14 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
         raise HTTPException(422, "Invalid cursor") from None
 
 
-def _recognition(d: FaceDetection, names: dict[str, str]) -> dict | None:
+def _recognition(d: FaceDetection, names: dict[str, str], state: str | None) -> dict | None:
     if d.outcome is None:
         return None  # stored before recognition existed
     return {
         "outcome": d.outcome,
+        # Why: match, below_reject_threshold, gallery_empty, between_thresholds, several_people_match,
+        # insufficient_quality, recognition_error, recognition_off, recognition_unavailable, not_performed.
+        "reason": outcome_reason(d.outcome, d.similarity, d.accept_threshold, state),
         # The matched person (AUTHORIZED only); null also when that person was deleted since.
         "person": {"id": d.person_id, "display_name": names.get(d.person_id)} if d.person_id else None,
         "similarity": d.similarity,  # how alike the faces look to the model, not proof of identity
@@ -63,7 +66,7 @@ def _recognition(d: FaceDetection, names: dict[str, str]) -> dict | None:
     }
 
 
-def _detection(event_id: str, d: FaceDetection, names: dict[str, str]) -> dict:
+def _detection(event_id: str, d: FaceDetection, names: dict[str, str], state: str | None) -> dict:
     return {
         "id": d.id,
         "position": d.position,
@@ -72,7 +75,7 @@ def _detection(event_id: str, d: FaceDetection, names: dict[str, str]) -> dict:
         "keypoints5": json.loads(d.keypoints),
         "quality": json.loads(d.quality),
         "crop_url": f"/api/face-events/{event_id}/detections/{d.id}/crop" if d.crop_file else None,
-        "recognition": _recognition(d, names),
+        "recognition": _recognition(d, names, state),
     }
 
 
@@ -97,7 +100,7 @@ def _event(e: FaceEvent, detections: list[FaceDetection], names: dict[str, str])
         "detail": e.detail,
         "recognition_state": e.recognition_state,  # off | unavailable | done; null before recognition existed
         "recognizer": e.recognizer,
-        "detections": [_detection(e.id, d, names) for d in detections],
+        "detections": [_detection(e.id, d, names, e.recognition_state) for d in detections],
     }
 
 

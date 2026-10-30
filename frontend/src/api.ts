@@ -155,8 +155,21 @@ export const FACE_EVENT_STATUSES: FaceEventStatus[] = [
   "faces_detected", "no_faces_detected", "frame_unavailable", "frame_rejected", "inference_failed", "gave_up",
 ];
 
+export type OutcomeReason =
+  | "match"
+  | "below_reject_threshold"
+  | "gallery_empty"
+  | "between_thresholds"
+  | "several_people_match"
+  | "insufficient_quality"
+  | "recognition_error"
+  | "recognition_off"
+  | "recognition_unavailable"
+  | "not_performed";
+
 export type FaceRecognition = {
   outcome: Outcome;
+  reason: OutcomeReason;
   person: { id: string; display_name: string | null } | null;
   similarity: number | null;
   thresholds: { accept: number | null; reject: number | null } | null;

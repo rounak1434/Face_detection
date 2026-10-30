@@ -1,4 +1,4 @@
-import { FaceEvent, FaceEventStatus, Outcome } from "../../api";
+import { FaceEvent, FaceEventStatus, Outcome, OutcomeReason } from "../../api";
 
 // Operator-facing wording for face events and recognition. Kept in one place so the
 // events page, the people page and the tests use the same terms.
@@ -25,6 +25,19 @@ export const OUTCOME_CLASS: Record<Outcome, string> = {
   INCONCLUSIVE: "status-warn",
   NOT_MATCHED: "status-neutral",
   SYSTEM_ERROR: "status-bad",
+};
+
+export const REASON_LABEL: Record<OutcomeReason, string> = {
+  match: "Similar enough to an enrolled person",
+  below_reject_threshold: "Not similar to anyone enrolled",
+  gallery_empty: "Nobody enrolled to compare with",
+  between_thresholds: "Between the thresholds: no decision",
+  several_people_match: "Similar to more than one enrolled person: no decision",
+  insufficient_quality: "Face too small to compare",
+  recognition_error: "Recognition error: no usable embedding",
+  recognition_off: "Recognition was off",
+  recognition_unavailable: "Recognition unavailable (embedder not ready)",
+  not_performed: "Recognition not performed",
 };
 
 export const STATUS_LABEL: Record<FaceEventStatus, string> = {

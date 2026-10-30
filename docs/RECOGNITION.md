@@ -15,6 +15,18 @@ A model turns each face into 128 numbers (an *embedding*, SFace from OpenCV Zoo,
 | `SYSTEM_ERROR` | The face had no usable embedding. |
 | `NOT_MATCHED` | Recognition was off, or the embedder was unavailable, when the event was analysed. |
 
+Each result also has a `reason`, so the cases inside one outcome are told apart:
+
+| Outcome | `reason` |
+|---|---|
+| `AUTHORIZED` | `match` |
+| `UNRECOGNIZED` | `below_reject_threshold`, or `gallery_empty` |
+| `INCONCLUSIVE` | `between_thresholds`, `several_people_match`, or `insufficient_quality` (face below `RECOGNITION_MIN_FACE_PX`, not compared) |
+| `SYSTEM_ERROR` | `recognition_error` |
+| `NOT_MATCHED` | `recognition_off`, `recognition_unavailable`, or `not_performed` |
+
+The reason is derived from what is stored (outcome, similarity, the accept threshold used, the event's recognition state), so events stored before it existed have one too.
+
 For each person the best of their reference faces counts. Inactive people are never matched. Events analysed before the switch was turned on are not matched afterwards.
 
 ## Thresholds: where the defaults come from

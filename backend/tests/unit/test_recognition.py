@@ -293,6 +293,8 @@ def test_switch_off_never_embeds(ing, gal):
     assert ing["detect"].call_count == 2 and ing["embed"].call_count == 0 and not ing["models"].called
     (e1, e2), dets = stored(ing)
     assert e1.recognition_state == e2.recognition_state == "off" and e1.recognizer is None
+    assert rc.outcome_reason(dets[0].outcome, dets[0].similarity, dets[0].accept_threshold,
+                             e1.recognition_state) == "recognition_off"
     assert {d.outcome for d in dets} == {"NOT_MATCHED"} and {d.person_id for d in dets} == {None}
 
 
@@ -395,6 +397,8 @@ def test_api_shows_outcomes_and_filters(signed_in, matched):
     assert oldest["recognition_state"] == "done" and oldest["recognizer"] == "sface 2021dec"
     rec = oldest["detections"][0]["recognition"]
     assert rec["outcome"] == "AUTHORIZED" and rec["person"] == {"id": matched, "display_name": "Asha"}
+    assert rec["reason"] == "match"
+    assert newest["detections"][0]["recognition"]["reason"] == "below_reject_threshold"
     assert rec["similarity"] == pytest.approx(0.9, abs=1e-4) and rec["thresholds"] == {"accept": 0.45, "reject": 0.3}
     assert newest["detections"][0]["recognition"]["outcome"] == "UNRECOGNIZED"
     assert newest["detections"][0]["recognition"]["person"] is None
@@ -417,6 +421,48 @@ def test_deleting_a_person_unlinks_past_matches(signed_in, matched, gal):
     with gal.db.sessionmaker() as s:
         detail = s.query(AuditEntry).filter_by(action="person_deleted").one().detail
     assert "1 past match(es) unlinked" in detail
+
+
+@pytest.mark.parametrize("outcome, similarity, state, reason", [
+    ("AUTHORIZED", 0.8, "done", "match"),
+    ("UNRECOGNIZED", 0.1, "done", "below_reject_threshold"),
+    ("UNRECOGNIZED", None, "done", "gallery_empty"),
+    ("INCONCLUSIVE", 0.38, "done", "between_thresholds"),
+    ("INCONCLUSIVE", 0.7, "done", "several_people_match"),
+    ("INCONCLUSIVE", None, "done", "insufficient_quality"),
+    ("SYSTEM_ERROR", None, "done", "recognition_error"),
+    ("NOT_MATCHED", None, "off", "recognition_off"),
+    ("NOT_MATCHED", None, "unavailable", "recognition_unavailable"),
+    ("NOT_MATCHED", None, None, "not_performed"),
+])
+def test_every_outcome_has_an_explicit_reason(outcome, similarity, state, reason):
+    assert rc.outcome_reason(outcome, similarity, 0.45, state) == reason
+
+
+def test_api_reports_why_each_face_got_its_outcome(signed_in, settings, gal):
+    """Through the real ingestor: a face too small to compare, two people matching, an in-between score."""
+    gal("A", vectors=[unit(0)])
+    gal("B", vectors=[unit(1)])
+    switch(gal.db, True)
+    both = [0.0] * 128
+    both[0] = both[1] = math.sqrt(0.5)  # 0.707 to A and to B
+    settings.face_frame_source = "snapshot"
+    with respx.mock(assert_all_called=False) as router:
+        fr = FakeFrigate(router)
+        router.get(f"{INFERENCE}/v1/models").respond(200, json=SFACE_READY)
+        router.post(f"{INFERENCE}/v1/embed").respond(200, json=embed_result(
+            embed_face(similar_to(0, 0.9), box={"x": 10, "y": 20, "w": 30, "h": 36}),
+            embed_face(both, box={"x": 300, "y": 20, "w": 80, "h": 100}),
+            embed_face(similar_to(0, 0.38), box={"x": 500, "y": 20, "w": 80, "h": 100})))
+        fr.events = [event(1)]
+        asyncio.run(fe.Ingestor(settings, FrigateClient(settings), InferenceClient(settings), gal.db.sessionmaker,
+                                MediaStore(settings.media_root, "faces"), cipher=gal.cipher,
+                                gallery_store=gal.store).ingest_once())
+    recs = [d["recognition"] for d in signed_in.get("/api/face-events").json()["items"][0]["detections"]]
+    assert [(r["outcome"], r["reason"]) for r in recs] == [
+        ("INCONCLUSIVE", "insufficient_quality"), ("INCONCLUSIVE", "several_people_match"),
+        ("INCONCLUSIVE", "between_thresholds")]
+    assert recs[0]["similarity"] is None and all(r["person"] is None for r in recs)
 
 
 def test_old_events_have_no_recognition_fields(signed_in, gal):

@@ -49,6 +49,33 @@ STATE_OFF = "off"
 STATE_UNAVAILABLE = "unavailable"
 STATE_DONE = "done"
 
+# Why a face got its outcome. Derived from what is stored (outcome, similarity, accept threshold,
+# the event's recognition state), so older rows get a reason too and no migration is needed.
+REASON_MATCH = "match"  # AUTHORIZED
+REASON_BELOW_REJECT = "below_reject_threshold"  # UNRECOGNIZED
+REASON_GALLERY_EMPTY = "gallery_empty"  # UNRECOGNIZED: nobody to compare with
+REASON_BETWEEN = "between_thresholds"  # INCONCLUSIVE
+REASON_TWO_PEOPLE = "several_people_match"  # INCONCLUSIVE
+REASON_FACE_TOO_SMALL = "insufficient_quality"  # INCONCLUSIVE: face below RECOGNITION_MIN_FACE_PX
+REASON_NO_EMBEDDING = "recognition_error"  # SYSTEM_ERROR
+REASON_OFF = "recognition_off"  # NOT_MATCHED
+REASON_UNAVAILABLE = "recognition_unavailable"  # NOT_MATCHED: embedder not ready
+REASON_NOT_PERFORMED = "not_performed"  # NOT_MATCHED, any other case
+
+
+def outcome_reason(outcome: str, similarity: float | None, accept: float | None, state: str | None) -> str:
+    if outcome == AUTHORIZED:
+        return REASON_MATCH
+    if outcome == UNRECOGNIZED:
+        return REASON_GALLERY_EMPTY if similarity is None else REASON_BELOW_REJECT
+    if outcome == INCONCLUSIVE:
+        if similarity is None:
+            return REASON_FACE_TOO_SMALL  # match_face skips comparing faces that are too small
+        return REASON_TWO_PEOPLE if accept is not None and similarity >= accept else REASON_BETWEEN
+    if outcome == SYSTEM_ERROR:
+        return REASON_NO_EMBEDDING
+    return {STATE_OFF: REASON_OFF, STATE_UNAVAILABLE: REASON_UNAVAILABLE}.get(state or "", REASON_NOT_PERFORMED)
+
 DIMENSIONS = 128
 EMBEDDER_MODEL = "sface"  # the model name /v1/models and /v1/embed report
 _SWITCH_KEY = "recognition_enabled"
