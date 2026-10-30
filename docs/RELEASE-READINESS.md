@@ -1,6 +1,6 @@
 # Release readiness
 
-Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `17cfb97`.
+Status of the whole product against the goals in [ARCHITECTURE.md](ARCHITECTURE.md) (milestones 1–4). Test evidence lives in [VERIFICATION.md](VERIFICATION.md); this page is the summary and the plan. Last updated 2026-10-30, base commit `9e2581a`.
 
 Labels: **Done (verified)** tested here; **Done (tests only)** implemented, tested with mocks, never run on the real stack; **Partial**; **Missing**; **Blocked** needs the Ubuntu host, Docker, the GPU or the CP Plus devices.
 
@@ -63,6 +63,9 @@ Test evidence by kind (do not mix them up):
 | Static Compose validation | `test_deploy_config.py` (CI) and a one-off schema check | 29 tests; 0 schema errors |
 | Real Docker / Frigate / go2rtc | none | 0 |
 | Real camera / NVR / GPU | none (only the YuNet model on a public-domain photo) | 0 |
+
+## Readiness for Linux integration (2026-10-30, commit `9e2581a`)
+Everything this development PC can run passes on Windows and Linux (WSL), three times for the timing-sensitive suites; static Compose validation passes; no container engine exists here, so nothing has run in Docker. The step-by-step host procedure, with a status for every check, is [LINUX-TEST-CHECKLIST.md](LINUX-TEST-CHECKLIST.md). **Nothing has been deployed or connected to the Linux PC; that needs the owner's explicit authorization.**
 
 ## Hardware- and host-dependent checks (Blocked)
 - Build all images; `docker compose config` and `up` on Ubuntu; `doctor.sh`; `run-integration-tests.sh`.

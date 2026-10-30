@@ -342,6 +342,22 @@ Scope and conclusions in ADR-0004 section 20; open risks in RELEASE-READINESS.md
 | Retry counters of vanished events kept for the life of the api | 3 counters still held after a complete poll | dropped after a complete poll; a counter of a still-listed event is kept |
 Also: symlinks planted in `media/faces` and `media/gallery` refused by the store and the image route answers 404 without the target's content (3 tests, run on Linux; skipped on Windows, where symlinks need privileges). Backend: Windows **631 passed, 13 skipped**; Linux (fresh clone of `17cfb97` + this change) **640 passed, 4 skipped** (symlink tests included), real-model tests 5 passed, face suites 153 passed ×3; inference 67 passed; static Compose valid; `ruff` clean. New: LICENSES.md, GALLERY operator procedure, TROUBLESHOOTING entries.
 
+## Final local verification before Linux integration, 2026-10-30, commit `9e2581a` (no code changes)
+Container engines: **none** (`docker`, `podman`, `docker-compose`, `nerdctl` absent on Windows and in WSL), so every container, Frigate and go2rtc check is **Blocked**, not run.
+| Check | Windows 11, Python 3.12.10 | Linux (WSL 2, fresh clone of `9e2581a`, Python 3.14.4) |
+|---|---|---|
+| Backend tests | **Passed**: 631 passed, 13 skipped | **Passed**: 640 passed, 4 skipped |
+| Inference tests (real YuNet and SFace) | **Passed**: 67 passed, 1 skipped; real-model files 22 passed | **Passed**: 67 passed, 1 skipped |
+| Backend real-model tests (detection on a Frigate snapshot, enrollment gate, SFace end to end, …) | Not run (inference package not in the backend venv; not installed) | **Passed**: 5 passed |
+| Frontend tests, `tsc`, production build | **Passed**: 68 passed, `tsc` OK, build OK | Not run here (no Node in WSL); CI's Ubuntu job passes |
+| `ruff` (backend, inference) | **Passed** | **Passed** |
+| Migrations and database tools | **Passed** (in the full suite) | **Passed**: 109 passed, 1 skipped |
+| Toggle (matcher never called when off), event persistence and images, retention and deletion | **Passed** (in the full suite) | **Passed** |
+| Repeats: Apply to Frigate, secrets, upload concurrency, switch, privacy review, audit, face events, event API, gallery, recognition | **Passed** ×3: 213 passed, 9 skipped each | **Passed** ×3: face suites 153 each; Apply, secrets and concurrency 69 each |
+| Static Compose (schema + references, both file sets, `.env.example` only) | — | **Passed**: 0 schema errors, 0 problems; negative controls caught |
+| Docker build, `compose config`, startup, Frigate, go2rtc, real camera | **Blocked** | **Blocked** |
+The reproducible host checklist is [LINUX-TEST-CHECKLIST.md](LINUX-TEST-CHECKLIST.md).
+
 ## To fill in on the Ubuntu host
 ```
 Date:

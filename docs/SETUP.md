@@ -4,6 +4,8 @@ Starts the full stack on a clean Ubuntu machine with the **synthetic RTSP test s
 
 Run these commands yourself. Steps marked **(system change)** install packages or change system configuration.
 
+> For the full integration test on the AI PC, follow [LINUX-TEST-CHECKLIST.md](LINUX-TEST-CHECKLIST.md) alongside this guide.
+>
 > **Status:** these steps have **not yet been run** on a Linux host. Docker, Frigate and the test stream have never run here (see [VERIFICATION.md](VERIFICATION.md)). Please report any step that fails.
 
 ## Supported host
