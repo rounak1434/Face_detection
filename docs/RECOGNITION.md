@@ -67,6 +67,32 @@ In `deploy/.env` (passed to the api by Compose; `docker compose up -d` applies a
 - `POST /v1/embed`: like `/v1/detect`, plus `embedding` per face (base64 of 128 little-endian float32 values, L2-normalised) and `embedder` (`name`, `version`, `dimensions`). Crops are off by default. 503 `model_unavailable` with `model: "sface"` when only the embedder is missing.
 - `/health` adds `embed_ready`; `/v1/models` lists `sface` (2021dec, 38,696,353 bytes, SHA-256 `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79`, Apache-2.0). The model is downloaded and verified at image build (`python -m inference_service.download`), so the inference image grows by about 39 MB; at runtime the service stays offline.
 
+## Model facts and measured speed
+| | |
+|---|---|
+| Model | SFace 2021dec (`face_recognition_sface_2021dec.onnx`), OpenCV Zoo, Apache-2.0; pinned size 38,696,353 bytes and SHA-256 |
+| Runtime | OpenCV `FaceRecognizerSF` (OpenCV 4.14, the `opencv-python-headless` wheel), **CPU only**: that wheel has no CUDA (0 CUDA devices reported). The GPU override (`compose.nvidia.yaml`) speeds up Frigate's detector, not these models |
+| Input | The face aligned to 112×112 from YuNet's five keypoints (`alignCrop`) — the detector finds the face, SFace only describes it |
+| Output | 128 values, L2-normalised by our adapter; compared by cosine similarity (a dot product) |
+
+`python -m inference_service.benchmark` measures load time, latency and memory on the machine it runs on (CPU, 30 runs by default; images optional, the public-domain portraits by default). It measures speed only, not accuracy. On the development laptop (Intel i5-11320H, 4 cores / 8 threads, 2026-10-30; 50 runs per image after warm-up):
+
+| | Windows 11, Python 3.12 | Linux (WSL 2, same laptop), Python 3.14 |
+|---|---|---|
+| Load YuNet / SFace | 6 ms / 63 ms | 2 ms / 64 ms |
+| Detect, 480×600 portrait (median / p95) | 13.5 / 14.7 ms | 7.4 / 10.7 ms |
+| Detect, 1920×1080 frame (scaled to 1280 px for detection) | 50.3 / 64.1 ms | 36.7 / 55.6 ms |
+| Embed, per face (median / p95) | 9.5 / 12.1 ms | 9.2 / 13.3 ms |
+| Process memory, both models loaded, after the 480×600 runs / after the 1080p runs | 159 MB / 195 MB (peak 219 MB) | 224 MB / 283 MB |
+
+So one face event costs roughly 40–65 ms of CPU for a 1080p frame with one face, plus about 10 ms per extra face; the inference container's 1,536 MB memory limit leaves ample room. **These are laptop numbers**; measure the Ubuntu AI PC in Phase 10. The inference image does not contain the test portraits, so copy one in and pass it (run in `deploy/`; these two commands have not been tried yet, as there is no Docker on the development PC):
+```bash
+docker compose cp ../inference/tests/data/public_domain/nasa_s69-31741_480x600.jpg inference:/tmp/face.jpg
+```
+```bash
+docker compose exec inference python -m inference_service.benchmark --models-dir /models /tmp/face.jpg
+```
+
 ## Not known yet
 - Accuracy at the real door: face size, angle, light, IR at night, motion blur.
 - False accepts between look-alike people in your gallery; how many reference images per person help.

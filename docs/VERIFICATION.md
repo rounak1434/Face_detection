@@ -319,6 +319,9 @@ Release-preparation changes: `RECOGNITION_ACCEPT_THRESHOLD`, `RECOGNITION_REJECT
 ## Re-check against the backend-API brief: explicit outcome reasons, 2026-10-30, base `c357cbd`
 Every item of the re-issued backend/persistence brief was already covered (Phases 3–6, 8; see ADR-0004 section 16); the one gap, an explicit "insufficient quality" status, is closed by a derived `reason` on each recognition result (no migration). Tests: `test_recognition.py` +12 (all 10 reasons; ingestion through the API producing `insufficient_quality`, `several_people_match`, `between_thresholds`; `match`/`below_reject_threshold` on the API; `recognition_off` on stored rows), `faces-pages.test.tsx` +1. Backend: Windows **610 passed, 10 skipped**; Linux (fresh clone of `c357cbd` + this change) **616 passed, 4 skipped**, real-model tests **5 passed**, face suites 129 passed ×3; inference 64 passed on both; frontend **61 passed**, build OK (Windows); static Compose unchanged and valid; `ruff` clean.
 
+## Re-check against the recognition brief: speed and memory measured, 2026-10-30, base `885ad48`
+New `python -m inference_service.benchmark` and `inference/tests/test_benchmark.py` (3: real models, latency and memory reported, missing model refused, memory reader). Measured on the development laptop (i5-11320H, 8 threads, OpenCV 4.14 CPU, 0 CUDA devices), 50 runs per image after warm-up: Windows detect 13.5 ms median (1080p 50.3 ms), embed 9.5 ms per face, memory 159 MB (1080p run 195 MB, peak 219 MB); WSL detect 7.4 ms (1080p 36.7 ms), embed 9.2 ms, memory 224 MB (1080p 283 MB). Details in RECOGNITION.md. Inference: Windows **67 passed, 1 skipped**; Linux (fresh clone of `885ad48` + this change) **67 passed, 1 skipped**; backend unchanged, Linux **616 passed, 4 skipped**, real-model tests 5 passed, face suites 129 ×3; static Compose valid; `ruff` clean. **Not the target AI PC; speed only, no accuracy claim.**
+
 ## To fill in on the Ubuntu host
 ```
 Date:
