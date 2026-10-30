@@ -197,3 +197,14 @@ The owner re-issued the backend/persistence brief. Everything it lists already e
 
 ## 17. Re-check against the recognition brief (2026-10-30)
 The owner re-issued the recognition brief. Already covered by section 12 and the Phase 8 fixes: an approved, pinned model with provenance and licence; detector and embedder kept separate; embeddings only from uploaded references and detected faces; the enrollment gate; L2 normalisation and cosine comparison; configurable thresholds with `UNRECOGNIZED` below them and never a forced closest match (`INCONCLUSIVE` for two people above accept); insufficient-quality, unavailable-model and error states; persisted outcome, person, similarity, thresholds and model version; encrypted embeddings never returned; the gallery re-read before every event so edits and deletions apply at once; tests for empty gallery, known and unknown subjects, low quality, ambiguity, invalid embeddings and model failures. The missing item was **memory use and inference time on the available PC**: `python -m inference_service.benchmark` (with `tests/test_benchmark.py`) now measures load time, latency and process memory, and the laptop results are in [RECOGNITION.md](../RECOGNITION.md) (detect 13.5 ms / embed 9.5 ms per face on Windows at 480×600; 50 ms detect at 1080p; under 300 MB). No accuracy or false-match rate is claimed: four photos of three people are not an evaluation set.
+
+## 18. Re-check against the recognition ON/OFF brief (2026-10-30)
+The behaviour already existed (sections 12, 14). The brief asked for specific evidence, now in `backend/tests/unit/test_recognition_switch.py` (16 tests; no production change was needed):
+- with recognition off, every matching step (`match`, `match_face`, `load_gallery`, `embed_missing_references`, `current_embedder`) is replaced by a function that fails if called; a valid face is processed and the event, frame file and detection (`NOT_MATCHED`) are stored; a control test shows the same replacement trips when recognition is on, so the check sits on the real path;
+- no stored setting means off; a damaged value fails closed; the default after a fresh install is off;
+- the setting survives an application restart in both directions;
+- switching off leaves reference embeddings byte-for-byte unchanged;
+- switching on does not identify past events, even when Frigate lists them again;
+- off, unavailable and attempted states are recorded and explained; a recognition failure while on is `SYSTEM_ERROR`;
+- only `GET`/`PUT /api/recognition` touch the setting, `"true"` as a string is refused, unauthorized requests change nothing.
+Switching off while events are queued is covered by `test_privacy_review.py` (section 14).

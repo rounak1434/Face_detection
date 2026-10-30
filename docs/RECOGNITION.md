@@ -46,6 +46,9 @@ Four photos of three people is a sanity check, not an accuracy measurement. Acce
   2. computes embeddings for reference faces that have none yet (for example those enrolled before SFace was installed);
   3. is refused (409 `gallery_empty`) if no active person then has a usable embedding.
 - Every change is written to the audit log with the thresholds in force.
+- **Default and restarts:** a fresh install has no setting stored, which means **off**. The value lives in the database (`app_settings.recognition_enabled`), so a restart, an update or a rebuild never changes it; only `PUT /api/recognition` does. A damaged stored value counts as off.
+- **Only the server decides.** The browser can only ask through `PUT /api/recognition` (signed in, password again, a strict boolean); no other request can turn matching on.
+- **Gallery while off:** people, reference images and embeddings stay exactly as they are, byte for byte; switching back on uses them again.
 - The switch and the gallery are read before **every** event, so switching off, deactivating or deleting a person applies to the very next event analysed.
 - **Off**: face events are analysed by the detector only (`/v1/detect`); no embedding is computed and faces are stored as `NOT_MATCHED`. **On**: each new event goes through `/v1/embed` and every face is matched. If SFace becomes unavailable while on, events are still analysed for faces and marked `recognition_state: unavailable`.
 
