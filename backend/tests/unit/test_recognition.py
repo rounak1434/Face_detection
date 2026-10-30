@@ -249,7 +249,8 @@ def test_switch_on_embeds_pending_references_and_is_audited(signed_in, frigate, 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["enabled"] is True and body["updated_by"] == ADMIN_USER and embed.call_count == 1
-    assert body["gallery"] == {"people": 1, "reference_faces": 1, "pending": 0, "unreadable": 0}
+    assert body["gallery"] == {"counts_known": True, "total_reference_faces": 1, "people": 1, "reference_faces": 1,
+                               "pending": 0, "unreadable": 0}
     assert _put(signed_in, False).json()["enabled"] is False
     with gal.db.sessionmaker() as s:
         actions = [(e.action, e.target_id) for e in s.query(AuditEntry).order_by(AuditEntry.at)]

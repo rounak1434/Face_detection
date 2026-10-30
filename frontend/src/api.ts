@@ -258,7 +258,16 @@ export type RecognitionStatus = {
   updated_at: string | null;
   updated_by: string | null;
   embedder: { ready: boolean; model: string | null; status: string };
-  gallery: { people: number; reference_faces: number; pending: number; unreadable: number | null };
+  // people / reference_faces / pending are null while the embedder is unavailable (counts_known false):
+  // which embeddings are usable depends on the model the embedder reports.
+  gallery: {
+    counts_known: boolean;
+    total_reference_faces: number;
+    people: number | null;
+    reference_faces: number | null;
+    pending: number | null;
+    unreadable: number | null;
+  };
   thresholds: { accept: number; reject: number; min_face_px: number };
 };
 

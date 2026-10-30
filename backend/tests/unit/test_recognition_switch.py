@@ -7,6 +7,7 @@ the matching step, not only at the inference call.
 
 import asyncio
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -165,6 +166,33 @@ def test_only_the_server_decides(signed_in, frigate, gal):  # noqa: F811
     assert not params & {"recognize", "recognition", "match", "enabled"}
     resp = signed_in.put("/api/recognition", json={"enabled": "true", "password": ADMIN_PASSWORD})
     assert resp.status_code == 422  # a string is not a boolean: no truthy coercion
+
+
+def test_unavailable_embedder_reports_unknown_counts_not_all_pending(signed_in, frigate, gal):  # noqa: F811
+    """Inference down: the panel must not claim every reference image needs embedding."""
+    models = frigate.get(f"{INFERENCE}/v1/models").mock(side_effect=httpx.ConnectError("down"))
+    pid = gal("A", vectors=[unit(0), unit(1)])
+    gal("Not embedded yet")  # one genuinely pending reference image
+    with gal.db.sessionmaker() as s:
+        before = {f.id: (f.embedding_enc, f.embedder) for f in s.query(ReferenceFace)}
+
+    body = signed_in.get("/api/recognition").json()
+    assert body["embedder"] == {"ready": False, "model": None, "status": "unreachable"}
+    assert body["gallery"] == {"counts_known": False, "total_reference_faces": 3, "people": None,
+                               "reference_faces": None, "pending": None, "unreadable": None}
+    refused = signed_in.put("/api/recognition", json={"enabled": True, "password": ADMIN_PASSWORD})
+    assert refused.status_code == 409 and refused.json()["error"] == "embedder_unavailable"
+
+    models.mock(side_effect=None)
+    models.respond(200, json=SFACE_READY)  # inference is back
+    body = signed_in.get("/api/recognition").json()
+    assert body["embedder"]["ready"] is True
+    assert body["gallery"] == {"counts_known": True, "total_reference_faces": 3, "people": 1,
+                               "reference_faces": 2, "pending": 1, "unreadable": None}
+    with gal.db.sessionmaker() as s:
+        assert {f.id: (f.embedding_enc, f.embedder) for f in s.query(ReferenceFace)} == before  # untouched
+        assert not rc.is_enabled(s)
+    assert signed_in.get(f"/api/people/{pid}").json()["face_count"] == 2
 
 
 def test_unauthorized_requests_change_nothing(client, frigate, gal):  # noqa: F811

@@ -41,15 +41,20 @@ def _payload(db: Session, state: AppState, embedder: str | None, embedder_status
     pending = select(func.count()).select_from(ReferenceFace).where(
         (ReferenceFace.embedding_enc.is_(None)) | (ReferenceFace.embedder.is_(None))
         | (ReferenceFace.embedder != (embedder or "")))
+    known = embedder is not None
     return {
         "enabled": recognition.is_enabled(db),
         "updated_at": as_utc(record.updated_at).isoformat() if record else None,
         "updated_by": record.updated_by if record else None,
-        "embedder": {"ready": embedder is not None, "model": embedder, "status": embedder_status},
+        "embedder": {"ready": known, "model": embedder, "status": embedder_status},
         "gallery": {
-            "people": db.scalar(people) if embedder else 0,  # active people with a usable embedding
-            "reference_faces": db.scalar(embedded) if embedder else 0,
-            "pending": db.scalar(pending),  # not yet embedded by the current model
+            # Which embeddings are usable depends on the current model, which is unknown while the
+            # embedder is unavailable: those counts are then null ("unknown"), not 0 or "all pending".
+            "counts_known": known,
+            "total_reference_faces": db.scalar(select(func.count()).select_from(ReferenceFace)),
+            "people": db.scalar(people) if known else None,  # active people with a usable embedding
+            "reference_faces": db.scalar(embedded) if known else None,
+            "pending": db.scalar(pending) if known else None,  # not yet embedded by the current model
             "unreadable": gallery.unreadable if gallery else None,
         },
         "thresholds": {"accept": settings.recognition_accept_threshold, "reject": settings.recognition_reject_threshold,

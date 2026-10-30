@@ -40,7 +40,7 @@ For each person the best of their reference faces counts. Inactive people are ne
 Four photos of three people is a sanity check, not an accuracy measurement. Accept 0.45 and reject 0.30 put OpenCV's 0.363 inside the "inconclusive" band, so borderline cases are not decided automatically. Before relying on the results, measure on the real door camera with consenting people (ADR-0004, Phase 10) and set the thresholds from that.
 
 ## The switch
-- `GET /api/recognition`: whether it is on, who changed it and when, whether the embedder is ready, how many active people and reference faces have an embedding, how many are still pending, and the thresholds.
+- `GET /api/recognition`: whether it is on, who changed it and when, whether the embedder is ready, how many active people and reference faces have an embedding, how many are still pending, and the thresholds. While the embedder is unavailable those three counts are `null` (`counts_known: false`): which embeddings are usable depends on the model the embedder reports, so the page shows only the total number of stored reference images and says the rest is unknown. Nothing in the gallery changes.
 - `PUT /api/recognition` with `{"enabled": true|false, "password": "…"}`: needs the signed-in user's password again (wrong: 403, audited, counts towards the sign-in lockout). Switching on:
   1. is refused (409 `embedder_unavailable`) while SFace is not loaded in the inference service;
   2. computes embeddings for reference faces that have none yet (for example those enrolled before SFace was installed);

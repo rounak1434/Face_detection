@@ -53,7 +53,7 @@ const asha: Person = {
 const recognitionOff: RecognitionStatus = {
   enabled: false, updated_at: null, updated_by: null,
   embedder: { ready: true, model: "sface 2021dec", status: "ready" },
-  gallery: { people: 1, reference_faces: 1, pending: 0, unreadable: null },
+  gallery: { counts_known: true, total_reference_faces: 1, people: 1, reference_faces: 1, pending: 0, unreadable: null },
   thresholds: { accept: 0.45, reject: 0.3, min_face_px: 40 },
 };
 
@@ -245,6 +245,29 @@ describe("PeoplePage", () => {
     render(<PeoplePage />);
     expect(await screen.findByText("Not ready (missing)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Switch recognition on" })).toBeDisabled();
+  });
+
+  it("shows unknown counts, not 'all pending', while the embedder is unreachable, and real counts once it is back", async () => {
+    let up = false;
+    const unknown = { ...recognitionOff, embedder: { ready: false, model: null, status: "unreachable" },
+      gallery: { counts_known: false, total_reference_faces: 3, people: null, reference_faces: null, pending: null, unreadable: null } };
+    const known = { ...recognitionOff, gallery: { counts_known: true, total_reference_faces: 3, people: 1,
+      reference_faces: 2, pending: 1, unreadable: null } };
+    routes((_m, p) => (p === "/api/recognition" ? { status: 200, body: up ? known : unknown } : undefined));
+    const { unmount } = render(<PeoplePage />);
+    expect(await screen.findByText("Not ready (unreachable)")).toBeInTheDocument();
+    expect(screen.getByTestId("counts-unknown")).toHaveTextContent("3 reference images stored");
+    expect(screen.getByTestId("counts-unknown")).toHaveTextContent("unknown until the embedder is available again");
+    expect(screen.queryByText("Not yet embedded")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ready to match")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch recognition on" })).toBeDisabled();
+    unmount();
+
+    up = true;
+    render(<PeoplePage />);
+    expect(await screen.findByText("1 active person, 2 reference images")).toBeInTheDocument();
+    expect(screen.getByText("1 reference image (embedded when switched on)")).toBeInTheDocument();
+    expect(screen.queryByTestId("counts-unknown")).not.toBeInTheDocument();
   });
 
   it("switches on only with the password, and shows wrong-password and refusal messages", async () => {

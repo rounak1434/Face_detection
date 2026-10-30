@@ -69,10 +69,22 @@ export function RecognitionPanel({ refreshKey, onChanged }: { refreshKey: number
         <dl className="facts">
           <dt>Embedder</dt>
           <dd className={status.embedder.ready ? undefined : "error"}>{embedderLabel}</dd>
-          <dt>Ready to match</dt>
-          <dd>{plural(status.gallery.people, "active person", "active people")},{" "}
-            {plural(status.gallery.reference_faces, "reference image", "reference images")}</dd>
-          {status.gallery.pending > 0 && (<><dt>Not yet embedded</dt><dd>{plural(status.gallery.pending, "reference image", "reference images")} (embedded when switched on)</dd></>)}
+          {status.gallery.counts_known ? (
+            <>
+              <dt>Ready to match</dt>
+              <dd>{plural(status.gallery.people ?? 0, "active person", "active people")},{" "}
+                {plural(status.gallery.reference_faces ?? 0, "reference image", "reference images")}</dd>
+              {(status.gallery.pending ?? 0) > 0 && (<><dt>Not yet embedded</dt><dd>{plural(status.gallery.pending ?? 0, "reference image", "reference images")} (embedded when switched on)</dd></>)}
+            </>
+          ) : (
+            <>
+              <dt>Reference images</dt>
+              <dd data-testid="counts-unknown">
+                {plural(status.gallery.total_reference_faces, "reference image", "reference images")} stored; how many
+                can be matched is unknown until the embedder is available again
+              </dd>
+            </>
+          )}
           {!!status.gallery.unreadable && (<><dt>Unreadable</dt><dd className="error">{plural(status.gallery.unreadable, "embedding", "embeddings")} (key changed or damaged)</dd></>)}
           <dt>Thresholds</dt>
           <dd>authorized ≥ {status.thresholds.accept}, unrecognized ≤ {status.thresholds.reject}, faces ≥ {status.thresholds.min_face_px} px</dd>
