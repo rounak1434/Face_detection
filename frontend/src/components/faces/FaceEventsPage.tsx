@@ -15,10 +15,13 @@ const toIso = (local: string) => (local ? new Date(local).toISOString() : undefi
 function OutcomeBadge({ d }: { d: FaceDetectionItem }) {
   if (!d.recognition) return <span className="status status-neutral" title="Stored before recognition existed">No result</span>;
   const r = d.recognition;
-  const who = r.outcome === "AUTHORIZED" ? (r.person ? r.person.display_name ?? "?" : "deleted person") : null;
+  // A match is the model's suggestion, never a verified identity: say so in the label itself.
+  const label = r.outcome === "AUTHORIZED"
+    ? `Automated match: ${r.person ? r.person.display_name ?? "?" : "deleted person"}`
+    : OUTCOME_LABEL[r.outcome];
   return (
     <span className={`status ${OUTCOME_CLASS[r.outcome]}`} title={REASON_LABEL[r.reason] ?? OUTCOME_HELP[r.outcome]}>
-      {OUTCOME_LABEL[r.outcome]}{who ? `: ${who}` : ""}
+      {label}
     </span>
   );
 }
@@ -87,8 +90,8 @@ function EventDetail({ event, onClose, onDeleted }: { event: FaceEvent; onClose:
           </ul>
         )}
         <p className="muted small">
-          A similarity says how alike two faces look to the model; it is not proof of identity, and there is no
-          liveness check.
+          Recognition results are <strong>automated matches, not verified identities</strong>. A similarity says how
+          alike two faces look to the model; it is not proof of identity, and there is no liveness check.
         </p>
         <div className="actions">
           <button className="secondary danger" onClick={remove} disabled={deleting}>Delete event</button>
@@ -155,8 +158,9 @@ export function FaceEventsPage() {
       <h1 className="page-title">Face events</h1>
       <p className="notice">
         Each finished person event from Frigate is checked once for faces. While recognition is switched on (People
-        page), every face is also compared with the authorized people. Frames and crops are kept for 30 days by
-        default.
+        page), every face is also compared with the authorized people; those results are automated matches, not
+        verified identities. Faces are listed whether recognition is on or off. Frames and crops are kept for 30 days
+        by default.
       </p>
 
       <form className="card filters" onSubmit={apply} aria-label="Filters">

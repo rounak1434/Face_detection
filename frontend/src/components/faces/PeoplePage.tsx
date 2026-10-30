@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, AuditEntry, Person } from "../../api";
+import { api, ApiError, AuditEntry, Person, PersonUpdate } from "../../api";
 import { PasswordDialog } from "./PasswordDialog";
 import { RecognitionPanel } from "./RecognitionPanel";
 
@@ -64,12 +64,60 @@ function NewPersonForm({ onCreated, onCancel }: { onCreated: (p: Person) => void
   );
 }
 
+function EditPersonForm({ person, onSaved, onCancel }: {
+  person: Person;
+  onSaved: (p: Person) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(person.display_name);
+  const [consentDate, setConsentDate] = useState(person.consent.date);
+  const [consentNote, setConsentNote] = useState(person.consent.note);
+  const [notes, setNotes] = useState(person.notes ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    // Only what changed is sent, so the audit log lists exactly the edited fields.
+    const update: PersonUpdate = {};
+    if (name.trim() !== person.display_name) update.display_name = name;
+    if (consentDate !== person.consent.date) update.consent_date = consentDate;
+    if (consentNote.trim() !== person.consent.note) update.consent_note = consentNote;
+    if ((notes.trim() || null) !== person.notes) update.notes = notes.trim() || null;
+    if (Object.keys(update).length === 0) return onCancel();
+    setBusy(true);
+    try {
+      onSaved(await api.updatePerson(person.id, update));
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="device-form" onSubmit={submit} aria-label={`Edit ${person.display_name}`}>
+      <div className="form-grid">
+        <label className="span-2">Name<input value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} /></label>
+        <label>Consent date<input type="date" value={consentDate} max={today()} onChange={(e) => setConsentDate(e.target.value)} required /></label>
+        <label>Consent evidence<input value={consentNote} onChange={(e) => setConsentNote(e.target.value)} required maxLength={500} /></label>
+        <label className="span-2">Notes (optional)<input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} /></label>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="actions">
+        <button type="submit" disabled={busy}>Save changes</button>
+        <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 function PersonDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => void; onDeleted: () => void }) {
   const [person, setPerson] = useState<Person | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [enrollError, setEnrollError] = useState<{ message: string; reasons: string[] } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -146,6 +194,10 @@ function PersonDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () 
         <span className={`status ${person.active ? "status-ok" : "status-neutral"}`}>{person.active ? "Active" : "Inactive"}</span>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
+      {editing && (
+        <EditPersonForm person={person} onCancel={() => setEditing(false)}
+          onSaved={(p) => { setPerson({ ...p, faces: p.faces ?? person.faces }); setEditing(false); onChanged(); }} />
+      )}
       <ul className="crops refs">
         {faces.map((f) => (
           <li key={f.id} className="crop">
@@ -173,6 +225,7 @@ function PersonDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () 
           <input ref={fileRef} type="file" accept={ACCEPTED.join(",")} onChange={enroll} disabled={!person.active || uploading}
             aria-label="Reference image file" />
         </label>
+        <button className="secondary" onClick={() => setEditing(true)} disabled={editing}>Edit details</button>
         <button className="secondary" onClick={() => setActive(!person.active)}>
           {person.active ? "Deactivate" : "Activate"}
         </button>

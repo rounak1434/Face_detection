@@ -4,7 +4,7 @@ import { FaceEvent, FaceEventStatus, Outcome, OutcomeReason } from "../../api";
 // events page, the people page and the tests use the same terms.
 
 export const OUTCOME_LABEL: Record<Outcome, string> = {
-  AUTHORIZED: "Authorized",
+  AUTHORIZED: "Authorized (automated match)",
   UNRECOGNIZED: "Unrecognized",
   INCONCLUSIVE: "Inconclusive",
   NOT_MATCHED: "Not matched",
@@ -28,7 +28,7 @@ export const OUTCOME_CLASS: Record<Outcome, string> = {
 };
 
 export const REASON_LABEL: Record<OutcomeReason, string> = {
-  match: "Similar enough to an enrolled person",
+  match: "Automated match: similar enough to an enrolled person (not a verified identity)",
   below_reject_threshold: "Not similar to anyone enrolled",
   gallery_empty: "Nobody enrolled to compare with",
   between_thresholds: "Between the thresholds: no decision",

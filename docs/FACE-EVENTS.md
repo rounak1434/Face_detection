@@ -2,7 +2,7 @@
 
 Each finished **person event** in Frigate is checked once for faces with the face detector (YuNet) and stored as a **face event**: where faces are. Only while the **recognition switch** is on (off by default) is each face also compared with the authorized-person gallery; see [RECOGNITION.md](RECOGNITION.md). Design and phase plan: [ADR-0004](adr/0004-face-events-and-recognition.md).
 
-Status: ingestion and storage (Phase 3), the API (Phase 4) and matching (Phase 6) are implemented. The **Face events** page (Phase 7) lists them with filters (camera, status, outcome, person, with/without faces, time range), opens each event with its frame, face boxes coloured by outcome, crops, similarity and thresholds, and deletes an event after confirmation. Tested with a simulated Frigate and the real detector and embedding models; **not yet run against a real Frigate or camera**.
+Status: ingestion and storage (Phase 3), the API (Phase 4) and matching (Phase 6) are implemented. The **Face events** page (Phase 7) lists them with filters (camera, status, outcome, person, with/without faces, time range), opens each event with its frame, face boxes coloured by outcome, crops, similarity and thresholds, and deletes an event after confirmation. A match is always labelled "Automated match: <name>", never as a verified identity; faces are listed whether recognition is on or off. Tested with a simulated Frigate and the real detector and embedding models; **not yet run against a real Frigate or camera**.
 
 ## How it works
 1. Every 10 seconds the api asks Frigate for finished person events that have a snapshot, oldest first (`GET /api/events?labels=person&has_snapshot=1&in_progress=0`).

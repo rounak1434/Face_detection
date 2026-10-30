@@ -290,6 +290,9 @@ function query(params: Record<string, string | undefined>): string {
 // screen). Only 401 does this: 403, 5xx and network errors leave the
 // session alone. The auth endpoints are exempt: a wrong password at login,
 // the "not signed in yet" check and logout are not session expiry.
+export const NETWORK_ERROR = "The server could not be reached. Check your connection.";
+export const API_DOWN = "The server is not responding (it may be restarting). Try again in a minute.";
+
 const AUTH_EXEMPT = new Set(["/api/auth/login", "/api/auth/me", "/api/auth/logout"]);
 let onUnauthorized: (() => void) | null = null;
 
@@ -300,17 +303,26 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   // FormData sets its own multipart Content-Type (with boundary); JSON otherwise.
   const defaults: Record<string, string> = init.body instanceof FormData ? {} : { "Content-Type": "application/json" };
-  const resp = await fetch(path, {
-    credentials: "same-origin",
-    ...init,
-    headers: { ...defaults, ...((init.headers as Record<string, string>) ?? {}) },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(path, {
+      credentials: "same-origin",
+      ...init,
+      headers: { ...defaults, ...((init.headers as Record<string, string>) ?? {}) },
+    });
+  } catch {
+    // fetch rejects only when no answer arrived (offline, server down, DNS); the browser's own
+    // message ("Failed to fetch") means nothing to an operator.
+    throw new ApiError(0, NETWORK_ERROR, "network");
+  }
   if (!resp.ok) {
     let detail = resp.statusText;
     let code: string | undefined;
     let reasons: string[] | undefined;
+    let fromApi = false; // the api always answers errors with a JSON body; the proxy does not
     try {
       const body = await resp.json();
+      fromApi = true;
       if (typeof body.error === "string") code = body.error;
       if (Array.isArray(body.reasons)) reasons = body.reasons.map(String);
       if (typeof body.detail === "string") detail = body.detail;
@@ -327,6 +339,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       // non-JSON error body
     }
     if (resp.status === 401 && !AUTH_EXEMPT.has(path.split("?")[0])) onUnauthorized?.();
+    // Caddy answers 502/503/504 itself when the api is down or restarting.
+    if (!fromApi && resp.status >= 502 && resp.status <= 504) throw new ApiError(resp.status, API_DOWN, "api_down");
     throw new ApiError(resp.status, detail || `HTTP ${resp.status}`, code, reasons);
   }
   return resp.status === 204 ? (undefined as T) : ((await resp.json()) as T);

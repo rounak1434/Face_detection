@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FaceEvent, Person, RecognitionStatus } from "../api";
+import { API_DOWN, FaceEvent, NETWORK_ERROR, Person, RecognitionStatus, setUnauthorizedHandler } from "../api";
 import { FaceEventsPage } from "../components/faces/FaceEventsPage";
 import { PeoplePage } from "../components/faces/PeoplePage";
 
@@ -71,11 +71,11 @@ describe("FaceEventsPage", () => {
       path.startsWith("/api/people") ? { status: 200, body: { items: [asha] } }
         : { status: 200, body: { items: events, next_cursor: null } });
     render(<FaceEventsPage />);
-    await screen.findByText("Authorized: Asha Verma");
+    await screen.findByText("Automated match: Asha Verma");
     const list = within(screen.getByRole("region", { name: "Face event list" }));
     expect(list.getByText("Unrecognized")).toBeInTheDocument();
     expect(list.getByText("Inconclusive")).toBeInTheDocument();
-    expect(list.getByText("Authorized: deleted person")).toBeInTheDocument();
+    expect(list.getByText("Automated match: deleted person")).toBeInTheDocument();
     expect(list.getByText("Recognition was off")).toBeInTheDocument();
     expect(list.getByText("No result")).toBeInTheDocument();
   });
@@ -87,10 +87,10 @@ describe("FaceEventsPage", () => {
       return { status: 200, body: { items: [events[0]], next_cursor: "c1" } };
     });
     render(<FaceEventsPage />);
-    await screen.findByText("Authorized: Asha Verma");
+    await screen.findByText("Automated match: Asha Verma");
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(await within(screen.getByRole("region", { name: "Face event list" })).findByText("Unrecognized")).toBeInTheDocument();
-    expect(screen.getByText("Authorized: Asha Verma")).toBeInTheDocument(); // appended, not replaced
+    expect(screen.getByText("Automated match: Asha Verma")).toBeInTheDocument(); // appended, not replaced
 
     const form = screen.getByRole("form", { name: "Filters" });
     fireEvent.change(within(form).getByLabelText("Outcome"), { target: { value: "AUTHORIZED" } });
@@ -128,7 +128,9 @@ describe("FaceEventsPage", () => {
     expect(within(dialog).getByAltText("Frame from entrance")).toHaveAttribute("src", "/api/face-events/e1/frame");
     expect(within(dialog).getByLabelText("Face 1")).toHaveStyle({ left: `${(100 / 1920) * 100}%` });
     expect(within(dialog).getByText(/similarity 0.617/)).toBeInTheDocument();
-    expect(within(dialog).getByText("Similar enough to an enrolled person")).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Automated match: similar enough/)).toBeInTheDocument();
+    expect(within(dialog).getByText("automated matches, not verified identities")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Authorized/)).not.toBeInTheDocument(); // never shown as a plain fact
     expect(within(dialog).getByText(/no liveness check/)).toBeInTheDocument();
 
     const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false);
@@ -152,6 +154,53 @@ describe("FaceEventsPage", () => {
     const dialog = screen.getByRole("dialog", { name: "Face event" });
     expect(within(dialog).getByText("Face too small to compare")).toBeInTheDocument();
     expect(within(dialog).getByText("Inconclusive")).toHaveAttribute("title", "Face too small to compare");
+  });
+
+  it("keeps showing faces, boxes and crops while recognition is off", async () => {
+    mockFetch((_method, path) =>
+      path.startsWith("/api/people") ? { status: 200, body: { items: [] } }
+        : { status: 200, body: { items: [ev("e8", [detection("d8", "NOT_MATCHED")], { recognition_state: "off",
+          recognizer: null })], next_cursor: null } });
+    render(<FaceEventsPage />);
+    const list = within(await screen.findByRole("region", { name: "Face event list" }));
+    expect(await list.findByText("Not matched")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Face event entrance/ }));
+    const dialog = screen.getByRole("dialog", { name: "Face event" });
+    expect(within(dialog).getByText(/Recognition was off/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Face 1")).toBeInTheDocument();
+    expect(within(dialog).getByAltText("Face 1")).toHaveAttribute("src", "/api/face-events/e/detections/d8/crop");
+  });
+
+  it("explains a network failure in plain words", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    render(<FaceEventsPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(`Face events unavailable: ${NETWORK_ERROR}`);
+    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+  });
+
+  it("explains a proxy gateway error (api down) but keeps the api's own 503 detail", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string) =>
+      input.startsWith("/api/people") ? new Response(JSON.stringify({ items: [] }), { status: 200 })
+        : new Response("", { status: 502, statusText: "Bad Gateway" })));
+    const { unmount } = render(<FaceEventsPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(API_DOWN);
+    unmount();
+    mockFetch((_m, path) => path.startsWith("/api/people") ? { status: 200, body: { items: [] } }
+      : { status: 503, body: { error: "analysis_busy", detail: "The analysis service is busy" } });
+    render(<FaceEventsPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The analysis service is busy");
+  });
+
+  it("returns to sign-in when the session has expired", async () => {
+    const expired = vi.fn();
+    setUnauthorizedHandler(expired);
+    try {
+      mockFetch(() => ({ status: 401, body: { detail: "Not signed in" } }));
+      render(<FaceEventsPage />);
+      await waitFor(() => expect(expired).toHaveBeenCalled());
+    } finally {
+      setUnauthorizedHandler(null);
+    }
   });
 
   it("reports an unavailable API", async () => {
@@ -293,6 +342,50 @@ describe("PeoplePage", () => {
     fireEvent.change(input, { target: { files: [new File(["gif"], "a.gif", { type: "image/gif" })] } });
     expect(await within(card).findByRole("alert")).toHaveTextContent("Choose a JPEG, PNG or WebP image.");
     expect(calls.filter((c) => c.path === "/api/people/p1/faces")).toHaveLength(2);
+  });
+
+  it("edits a person's details, sending only what changed", async () => {
+    const calls = routes((m, p, b) =>
+      m === "PATCH" && p === "/api/people/p1"
+        ? { status: 200, body: { ...detail, display_name: (b as { display_name?: string }).display_name ?? detail.display_name,
+          consent: { ...detail.consent, note: (b as { consent_note?: string }).consent_note ?? detail.consent.note } } }
+        : undefined);
+    render(<PeoplePage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Asha Verma/ }));
+    const card = await screen.findByRole("article", { name: "Asha Verma" });
+    fireEvent.click(within(card).getByRole("button", { name: "Edit details" }));
+    let form = screen.getByRole("form", { name: "Edit Asha Verma" });
+    expect(within(form).getByLabelText("Name")).toHaveValue("Asha Verma");
+    expect(within(form).getByLabelText("Consent evidence")).toHaveValue("signed form #12");
+    fireEvent.click(within(form).getByRole("button", { name: "Save changes" })); // nothing changed
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    expect(screen.queryByRole("form", { name: "Edit Asha Verma" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(card).getByRole("button", { name: "Edit details" }));
+    form = screen.getByRole("form", { name: "Edit Asha Verma" });
+    fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Asha V." } });
+    fireEvent.change(within(form).getByLabelText("Consent evidence"), { target: { value: "renewed form #40" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("article", { name: "Asha V." })).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({ display_name: "Asha V.", consent_note: "renewed form #40" });
+  });
+
+  it("shows the server's refusal of an edit", async () => {
+    routes((m) => (m === "PATCH" ? { status: 422, body: { detail: "consent_note: must not be empty" } } : undefined));
+    render(<PeoplePage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Asha Verma/ }));
+    const card = await screen.findByRole("article", { name: "Asha Verma" });
+    fireEvent.click(within(card).getByRole("button", { name: "Edit details" }));
+    const form = screen.getByRole("form", { name: "Edit Asha Verma" });
+    fireEvent.change(within(form).getByLabelText("Notes (optional)"), { target: { value: "x" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("consent_note: must not be empty");
+  });
+
+  it("shows plain network errors on the People page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    render(<PeoplePage />);
+    await waitFor(() => expect(screen.getAllByText(NETWORK_ERROR).length).toBeGreaterThanOrEqual(2));
   });
 
   it("removes a reference image only after confirmation", async () => {

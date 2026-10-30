@@ -325,6 +325,14 @@ New `python -m inference_service.benchmark` and `inference/tests/test_benchmark.
 ## Re-check against the recognition ON/OFF brief, 2026-10-30, base `97a8763`
 `backend/tests/unit/test_recognition_switch.py` (16, no production change needed): matcher replaced by fail-if-called functions with recognition off, a valid face still stored with event, frame file and `NOT_MATCHED` detection; control test proving the replacement trips when on; no stored setting = off; damaged values fail closed (5 cases); fresh-install default off; setting survives a restart both ways; embeddings byte-for-byte unchanged by switching off; no retroactive identification when switched on; off / unavailable / attempted states and a recognition failure recorded; only `GET`/`PUT /api/recognition`, string `"true"` refused; unauthorized requests change nothing. Backend: Windows **626 passed, 10 skipped**; Linux (fresh clone of `97a8763` + this change) **632 passed, 4 skipped**, real-model tests 5 passed, face suites 145 passed ×3; inference 67 passed; static Compose valid; `ruff` clean.
 
+## Re-check against the frontend brief, 2026-10-30, base `010da52`
+| Kind | Evidence | Result |
+|---|---|---|
+| Component tests | `faces-pages.test.tsx` +7: person edit (prefilled, unchanged form sends nothing, only changed fields sent, new name shown), edit refusal shown, faces/boxes/crops shown with recognition off, "Automated match" wording and no plain "Authorized" in the event view, network failure in plain words on both pages, proxy 502 vs the api's own 503, expired session calls the sign-in handler | whole frontend **68 passed**, `tsc` and production build OK (Windows); Linux via CI |
+| Manual, real api (scratch database) | Edit form against the real api: prefilled values, `Bad\u0007Name` refused ("display_name: must not contain control characters"), valid edit saved, list updated, audit "changed: display_name, notes"; recognition panel with the inference service stopped: "Embedder: Not ready (unreachable)"; api stopped: Vite answers 500, which led to the gateway-error handling (Caddy answers 502) | passed / fixed |
+
+Backend and inference unchanged in this step.
+
 ## To fill in on the Ubuntu host
 ```
 Date:

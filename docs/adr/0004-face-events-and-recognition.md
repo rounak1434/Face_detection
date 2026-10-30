@@ -208,3 +208,10 @@ The behaviour already existed (sections 12, 14). The brief asked for specific ev
 - off, unavailable and attempted states are recorded and explained; a recognition failure while on is `SYSTEM_ERROR`;
 - only `GET`/`PUT /api/recognition` touch the setting, `"true"` as a string is refused, unauthorized requests change nothing.
 Switching off while events are queued is covered by `test_privacy_review.py` (section 14).
+
+## 19. Re-check against the frontend brief (2026-10-30)
+The pages already existed (section 13). Gaps closed:
+- **Editing people**: the People page could only activate or deactivate; it now edits name, notes and the consent record (only changed fields are sent, so the audit log lists exactly those; nothing changed sends nothing; server refusals are shown).
+- **Automated, not verified**: a match read "Authorized: <name>", like a fact. Badges now read "Automated match: <name>", the reason text and the event view say "automated matches, not verified identities", and the outcome filter says "Authorized (automated match)".
+- **Network and api-down states**: a failed request showed the browser's "Failed to fetch". The API client now says the server could not be reached. Checking against the real stack showed that an api that is down does not fail the request at all: the proxy answers 502 (Caddy) or 500 (Vite in development) without our JSON body. Gateway errors 502–504 without that body now read "The server is not responding (it may be restarting)"; the api's own 503 answers keep their detail. A bare 500 cannot be told apart from a real server error and is shown as is.
+Evidence: `faces-pages.test.tsx` (+7; whole frontend 68), and a run against the real api: edit form prefilled, a control character refused with the server's message, a valid edit saved and audited by field name, the embedder shown as "Not ready (unreachable)" with the inference service stopped.
